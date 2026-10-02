@@ -164,7 +164,34 @@ select.field.inline{width:auto;padding:5px 10px;font-size:14px}
 .tag{display:inline-block;font-size:12px;background:var(--accent-soft);color:var(--ink);border-radius:6px;padding:1px 7px;margin-top:4px}
 .shared-review{margin:6px 0 0;font-size:14px;white-space:pre-wrap;border-left:2px solid var(--line);padding-left:10px}
 .friend .btn{flex:0 0 auto}
-@media (max-width:520px){.friend:has(.btn){flex-wrap:wrap}.friend:has(.btn) .who{flex-basis:calc(100% - 50px)}}
+.friend .who span{display:block}
+.friend .who .count{color:var(--ink)}
+.friend .who .stars-sm{color:var(--star)}
+.tag.muted{background:var(--raised);color:var(--muted)}
+.toolbar-right{flex:0 1 auto}
+.toolbar .holder-filter{max-width:220px;width:auto}
+.result.top > .btn{align-self:center}
+.friend-head{margin-bottom:18px}
+.friend-head h2{font:600 26px/1.2 var(--serif);margin:6px 0 2px}
+.back{padding-left:0}
+.stars-lg{color:var(--star);font-size:22px;letter-spacing:2px}
+.reviews{display:grid;gap:14px}
+.rev{display:flex;gap:10px;align-items:flex-start}
+.avatar.sm{width:30px;height:30px;font-size:13px}
+.rev-body{flex:1;min-width:0}
+.rev-head{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline}
+.rev-text{margin:4px 0 2px;white-space:pre-wrap;overflow-wrap:anywhere}
+.avg{margin:0 0 12px;font-size:14px;color:var(--muted)}
+.recs{margin-bottom:28px}
+.recs h3{font:600 20px/1.3 var(--serif);margin:0 0 10px}
+.friend.rec{flex-wrap:wrap;align-items:flex-start}
+.friend.rec .who{flex-basis:calc(100% - 56px)}
+.rec-actions{margin-left:52px}
+.rec-note{font-size:14px;color:var(--ink) !important;border-left:2px solid var(--accent);padding-left:10px;margin-top:6px}
+.rec-from{background:var(--accent-soft);border-radius:10px;padding:10px 12px;margin-top:16px;font-size:14px}
+.rec-from .rev-text{margin:4px 0 0}
+.ask{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;background:var(--accent-soft);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:14px}
+@media (max-width:520px){.friend:has(.btn){flex-wrap:wrap}.friend:has(.btn) .who{flex-basis:calc(100% - 56px)}}
 </style>
 </head>
 <body>
@@ -211,8 +238,8 @@ async function run(query, failMsg){
 }
 
 /* ================= State ================= */
-const S = { user:null, books:[], contacts:[], friendships:[], profiles:{}, borrowed:[], loaded:false,
-            view:'library', filter:'all', q:'' };
+const S = { user:null, books:[], contacts:[], friendships:[], profiles:{}, borrowed:[], requests:[], shelfCounts:{}, loaded:false,
+            view:'library', filter:'all', q:'', holder:'' };
 const me = () => S.user && S.user.id;
 const myName = () => (S.profiles[me()]||{}).display_name || 'You';
 const openLoan = b => (b.loans||[]).find(l=>!l.returned_at);
@@ -222,6 +249,11 @@ function loanName(l){
   if (l.contact_id){ const c = S.contacts.find(x=>x.id===l.contact_id); if (c) return c.name; }
   return l.borrower_name || 'Someone';
 }
+const loanKey = l => !l ? '' : l.borrower_id ? 'u:'+l.borrower_id : l.contact_id ? 'c:'+l.contact_id : 'n:'+(l.borrower_name||'');
+const incomingRequests = () => S.requests.filter(r=>r.status==='pending' && r.owner_id===me());
+const outgoingRequests = () => S.requests.filter(r=>r.requester_id===me());
+const newRecs = () => (S.recs||[]).filter(r=>r.recipient_id===me() && r.status==='new');
+const sentRecs = () => (S.recs||[]).filter(r=>r.sender_id===me());
 function friendsList(){
   return S.friendships.filter(f=>f.status==='accepted')
     .map(f=>{ const id = f.requester===me() ? f.addressee : f.requester; return { id, fid:f.id, name:(S.profiles[id]||{}).display_name || 'A friend' }; })
@@ -239,6 +271,25 @@ async function loadAll(){
     ]);
     Object.assign(S, { books, contacts, friendships, borrowed, loaded:true, profiles:Object.fromEntries(profiles.map(p=>[p.id,p])) });
   }catch{ S.loaded = true; }
+  // Borrow requests and shelf counts come from database update 1.
+  const [req, counts] = await Promise.all([sb.rpc('my_book_requests'), sb.rpc('friend_shelf_counts')]);
+  if (req.error || counts.error){
+    console.error(req.error || counts.error);
+    if (!S.warnedUpdate){ S.warnedUpdate = true; toast('Borrow requests aren’t set up yet. Run update-1-borrow-requests.sql in Supabase.'); }
+  } else {
+    S.requests = req.data || [];
+    S.shelfCounts = Object.fromEntries((counts.data||[]).map(c=>[c.friend_id, Number(c.book_count)]));
+  }
+  // Borrowed-book reviews come from database update 2.
+  const hist = await sb.rpc('my_borrow_history');
+  if (hist.error){ console.error(hist.error); S.history = null;
+    if (!S.warnedUpdate2){ S.warnedUpdate2 = true; toast('Shared reviews aren’t set up yet. Run update-2-shared-reviews.sql in Supabase.'); } }
+  else S.history = hist.data || [];
+  // Recommendations come from database update 3.
+  const recs = await sb.rpc('my_recommendations');
+  if (recs.error){ console.error(recs.error); S.recs = null;
+    if (!S.warnedUpdate3){ S.warnedUpdate3 = true; toast('Recommendations aren’t set up yet. Run update-3-recommendations.sql in Supabase.'); } }
+  else S.recs = recs.data || [];
   render();
 }
 
@@ -297,7 +348,7 @@ function render(){
   const focusedId = document.activeElement && document.activeElement.id;
   const caret = document.activeElement && document.activeElement.selectionStart;
   const lent = S.books.filter(openLoan).length;
-  const incoming = S.friendships.filter(f=>f.status==='pending' && f.addressee===me()).length;
+  const incoming = S.friendships.filter(f=>f.status==='pending' && f.addressee===me()).length + incomingRequests().length;
   app.replaceChildren(h('div',{class:'wrap'},
     h('header',{class:'top'},
       h('div',{class:'brand'}, h('h1',{text:'Shelfmark'}),
@@ -306,9 +357,9 @@ function render(){
         h('button',{class:'btn primary',onclick:()=>openAdd('scan')},'+ Add a book'),
         h('button',{class:'acct',onclick:openAccount,'aria-label':'Your account',style:`background:${spine(myName())}`,text:(myName()[0]||'?').toUpperCase()}))),
     h('nav',{class:'tabs',role:'tablist'},
-      [['library','Library'],['friends', incoming ? `Friends (${incoming})` : 'Friends']].map(([k,l])=>
-        h('button',{role:'tab','aria-selected':S.view===k,onclick:()=>{S.view=k;render();}},l))),
-    h('main',{}, S.view==='library' ? libraryView() : friendsView())));
+      [['library', newRecs().length ? `Library (${newRecs().length})` : 'Library'],['friends', incoming ? `Friends (${incoming})` : 'Friends']].map(([k,l])=>
+        h('button',{role:'tab','aria-selected':S.view===k || (k==='friends' && S.view==='friend'),onclick:()=>{S.view=k;S.friend=null;render();}},l))),
+    h('main',{}, S.view==='library' ? libraryView() : S.view==='friend' && S.friend ? friendShelfView() : friendsView())));
   if (focusedId){ const el=document.getElementById(focusedId); if(el){ el.focus(); try{el.setSelectionRange(caret,caret);}catch{} } }
 }
 
@@ -324,34 +375,71 @@ function coverEl(b, cls='cover'){
   return el;
 }
 
+function recsStrip(){
+  const list = newRecs();
+  if (!list.length) return null;
+  return h('section',{class:'recs'}, h('h3',{},'Recommended for you'),
+    h('div',{class:'friends'}, list.map(r=>h('div',{class:'friend rec'},
+      coverEl(r,'mini'),
+      h('div',{class:'who'}, h('b',{text:r.title}),
+        h('span',{text:[r.author, `from ${r.sender_name}, ${fmtDate(r.created_at)}`].filter(Boolean).join(' · ')}),
+        r.note ? h('p',{class:'rev-text rec-note',text:r.note}) : null),
+      h('div',{class:'row rec-actions'},
+        h('button',{class:'btn primary',onclick:e=>acceptRec(r,e.currentTarget)},'Add to Want to read'),
+        h('button',{class:'btn ghost',onclick:async e=>{ e.currentTarget.disabled=true;
+          await run(sb.rpc('respond_recommendation',{p_id:r.id,p_status:'dismissed'}),"Couldn't update that.").catch(()=>{}); loadAll(); }},'Not for me'))))));
+}
+async function acceptRec(r, btn){
+  btn.disabled = true;
+  try{
+    let book = S.books.find(b=>(r.isbn && b.isbn===r.isbn) || (b.title.toLowerCase().trim()===r.title.toLowerCase().trim() && (b.author||'').toLowerCase().trim()===(r.author||'').toLowerCase().trim()));
+    if (!book) book = await run(sb.from('user_books').insert({ title:r.title, author:r.author, isbn:r.isbn, cover_url:r.cover_url, year:r.year, pages:r.pages, status:'want' }).select('id').single(), "Couldn't add that book.");
+    await run(sb.rpc('respond_recommendation',{p_id:r.id, p_status:'added', p_user_book:book.id}), "Couldn't update that recommendation.");
+    toast(`Added “${r.title}” to Want to read`); loadAll();
+  }catch{ btn.disabled = false; }
+}
+
 function libraryView(){
   if (!S.loaded) return h('p',{class:'small',text:'Loading…'});
   const all = S.books;
-  if (!all.length) return h('div',{class:'empty'},
+  const strip = recsStrip();
+  if (!all.length) return h('div',{}, strip, h('div',{class:'empty'},
     h('h2',{text:'Your shelf is empty'}),
     h('p',{text:'Scan the barcode on the back of a book, or search by title, to add your first one.'}),
     h('button',{class:'btn primary',onclick:()=>openAdd('scan')},'Scan a barcode'),' ',
-    h('button',{class:'btn',onclick:()=>openAdd('search')},'Search by title'));
+    h('button',{class:'btn',onclick:()=>openAdd('search')},'Search by title')));
   const counts = {all:all.length, lent:0};
   all.forEach(b=>{ counts[b.status]=(counts[b.status]||0)+1; if(openLoan(b)) counts.lent++; });
   const filters = [['all','All'],['reading','Reading'],['want','Want to read'],['read','Read'],['dnf',"Didn't finish"],['lent','Lent out']].filter(([k])=>k==='all'||counts[k]);
   if (!filters.some(([k])=>k===S.filter)) S.filter='all';
+  const holders = new Map();
+  all.forEach(b=>{ const l = openLoan(b); if (!l) return; const k = loanKey(l); const e = holders.get(k) || {name:loanName(l), n:0}; e.n++; holders.set(k, e); });
+  if (S.holder && S.holder!=='shelf' && !holders.has(S.holder)) S.holder = '';
+  const holderSel = holders.size ? h('select',{class:'field holder-filter','aria-label':'Who has it',onchange:e=>{S.holder=e.target.value;render();}},
+    h('option',{value:'',text:'Who has it: all books',selected:!S.holder}),
+    h('option',{value:'shelf',text:`On my shelf (${all.length - counts.lent})`,selected:S.holder==='shelf'}),
+    [...holders.entries()].sort((a,b)=>a[1].name.localeCompare(b[1].name)).map(([k,v])=>h('option',{value:k,text:`With ${v.name} (${v.n})`,selected:S.holder===k}))) : null;
   const q = S.q.trim().toLowerCase();
   const list = all.filter(b=>{
     if (S.filter==='lent' ? !openLoan(b) : S.filter!=='all' && b.status!==S.filter) return false;
+    if (S.holder==='shelf' && openLoan(b)) return false;
+    if (S.holder && S.holder!=='shelf' && loanKey(openLoan(b))!==S.holder) return false;
     return !q || (b.title||'').toLowerCase().includes(q) || (b.author||'').toLowerCase().includes(q);
   });
-  return h('div',{},
+  return h('div',{}, strip,
     h('div',{class:'toolbar'},
       h('div',{class:'chips'}, filters.map(([k,l])=>h('button',{class:'chip','aria-pressed':S.filter===k,onclick:()=>{S.filter=k;render();}},l,h('span',{class:'n',text:counts[k]})))),
-      h('input',{class:'field',id:'libSearch',type:'search',placeholder:'Filter by title or author',value:S.q,oninput:e=>{S.q=e.target.value;render();}})),
+      h('div',{class:'row toolbar-right'}, holderSel,
+        h('input',{class:'field',id:'libSearch',type:'search',placeholder:'Filter by title or author',value:S.q,oninput:e=>{S.q=e.target.value;render();}}))),
     list.length ? h('div',{class:'shelf'}, list.map(b=>{
       const who = loanName(openLoan(b));
+      const asks = incomingRequests().filter(r=>r.book_id===b.id);
       return h('button',{class:'book',onclick:()=>openDetail(b.id),'aria-label':`${b.title}${b.author?' by '+b.author:''}`},
         coverEl(b),
         h('div',{class:'meta'}, h('div',{text:STATUS[b.status]}),
           b.rating ? h('div',{class:'stars-sm',text:'★'.repeat(b.rating)}) : null,
-          who ? h('div',{class:'lent',text:`With ${who}`}) : null));
+          who ? h('div',{class:'lent',text:`With ${who}`}) : null,
+          asks.length ? h('div',{class:'tag',text: asks.length===1 ? `${asks[0].requester_name} asked to borrow` : `${asks.length} borrow requests`}) : null));
     })) : h('p',{class:'small',text:'No books match that filter.'}));
 }
 
@@ -381,19 +469,28 @@ function friendsView(){
   }}, h('div',{style:'flex:1;min-width:200px'},emailIn), h('button',{class:'btn primary',type:'submit'},'Send request'));
 
   const holding = id => S.books.filter(b=>{ const l=openLoan(b); return l && l.borrower_id===id; });
+  const inReq = incomingRequests(), outReq = outgoingRequests();
+  const reqStatus = { pending:'Waiting for a reply', approved:'Approved', declined:'Declined' };
   const contactHolding = id => S.books.filter(b=>{ const l=openLoan(b); return l && l.contact_id===id; });
 
   return h('div',{class:'friends-page'},
     h('section',{}, h('h3',{},'Add a friend'),
-      h('p',{class:'small',style:'margin-top:0'},'Friends can see your shelf and the reviews you choose to share with them.'), addForm, addMsg),
+      h('p',{class:'small',style:'margin-top:0'},'Friends can see your shelf and your reviews. You can make any review private.'), addForm, addMsg),
     incoming.length ? h('section',{}, h('h3',{},'Friend requests'), h('div',{class:'friends'}, incoming.map(f=>h('div',{class:'friend'}, avatar(name(f.requester)),
       h('div',{class:'who'}, h('b',{text:name(f.requester)}), h('span',{text:'Wants to be friends'})),
       h('button',{class:'btn primary',onclick:async()=>{ await run(sb.rpc('accept_friend_request',{p_id:f.id}),"Couldn't accept that request."); loadAll(); }},'Accept'),
       h('button',{class:'btn ghost',onclick:async()=>{ await run(sb.from('friendships').delete().eq('id',f.id),"Couldn't decline that request."); loadAll(); }},'Decline'))))) : null,
+    inReq.length ? h('section',{}, h('h3',{},'Borrow requests'), h('div',{class:'friends'}, inReq.map(r=>h('div',{class:'friend'},
+      coverEl(r,'mini'),
+      h('div',{class:'who'}, h('b',{text:r.title}), h('span',{text:`${r.requester_name} asked on ${fmtDate(r.created_at)}`})),
+      h('button',{class:'btn primary',onclick:()=>respondRequest(r,true)},'Approve'),
+      h('button',{class:'btn ghost',onclick:()=>respondRequest(r,false)},'Decline'))))) : null,
     h('section',{}, h('h3',{},'Your friends'),
       friends.length ? h('div',{class:'friends'}, friends.map(fr=>{ const has = holding(fr.id);
         return h('div',{class:'friend'}, avatar(fr.name),
-          h('div',{class:'who'}, h('b',{text:fr.name}), h('span',{text: has.length ? `Has ${has.map(b=>b.title).join(', ')}` : 'Has none of your books'})),
+          h('div',{class:'who'}, h('b',{text:fr.name}),
+            h('span',{class:'count',text: S.shelfCounts[fr.id]!=null ? `${S.shelfCounts[fr.id]||0} book${S.shelfCounts[fr.id]===1?'':'s'} on their shelf` : ''}),
+            h('span',{text: has.length ? `Has ${has.length} of yours: ${has.map(b=>b.title).join(', ')}` : 'Has none of your books'})),
           h('button',{class:'btn',onclick:()=>openFriendShelf(fr)},'View shelf'),
           h('button',{class:'btn ghost',onclick:async()=>{ if(!confirm(`Remove ${fr.name} as a friend? You’ll stop seeing each other’s shelves.`)) return;
             await run(sb.from('friendships').delete().eq('id',fr.fid),"Couldn't remove that friend."); loadAll(); }},'Remove'));
@@ -401,8 +498,19 @@ function friendsView(){
     outgoing.length ? h('section',{}, h('h3',{},'Waiting for a reply'), h('div',{class:'friends'}, outgoing.map(f=>h('div',{class:'friend'}, avatar(name(f.addressee)),
       h('div',{class:'who'}, h('b',{text:name(f.addressee)}), h('span',{text:`Sent ${fmtDate(f.created_at)}`})),
       h('button',{class:'btn ghost',onclick:async()=>{ await run(sb.from('friendships').delete().eq('id',f.id),"Couldn't cancel that request."); loadAll(); }},'Cancel'))))) : null,
-    S.borrowed.length ? h('section',{}, h('h3',{},'Books you’re borrowing'), h('div',{class:'friends'}, S.borrowed.map(b=>h('div',{class:'friend'},
-      coverEl(b,'mini'), h('div',{class:'who'}, h('b',{text:b.title}), h('span',{text:`From ${b.owner_name}, since ${fmtDate(b.lent_at)}`})))))) : null,
+    sentRecs().length ? h('section',{}, h('h3',{},'Recommendations you’ve sent'), h('div',{class:'friends'}, sentRecs().map(r=>h('div',{class:'friend'},
+      coverEl(r,'mini'),
+      h('div',{class:'who'}, h('b',{text:r.title}),
+        h('span',{text: r.status==='added' ? `${r.recipient_name} added it to their list` : `Sent to ${r.recipient_name}, ${fmtDate(r.created_at)}`}),
+        r.note ? h('p',{class:'rev-text rec-note',text:r.note}) : null),
+      r.status!=='added' ? h('button',{class:'btn ghost',onclick:async e=>{ if(!confirm(`Take back your recommendation of “${r.title}” to ${r.recipient_name}?`)) return; e.currentTarget.disabled=true;
+        await run(sb.rpc('unsend_recommendation',{p_id:r.id}),"Couldn't take that back.").catch(()=>{}); loadAll(); }},'Take back') : null)))) : null,
+    outReq.length ? h('section',{}, h('h3',{},'Books you asked to borrow'), h('div',{class:'friends'}, outReq.map(r=>h('div',{class:'friend'},
+      coverEl(r,'mini'),
+      h('div',{class:'who'}, h('b',{text:r.title}),
+        h('span',{text:`From ${r.owner_name}: ${reqStatus[r.status]}${r.responded_at?' '+fmtDate(r.responded_at):''}`})),
+      r.status==='pending' ? h('button',{class:'btn ghost',onclick:async()=>{ await run(sb.rpc('cancel_book_request',{p_id:r.id}),"Couldn't cancel that request."); toast('Request cancelled'); loadAll(); }},'Cancel') : null)))) : null,
+    ...borrowSections(),
     h('section',{}, h('h3',{},'People without an account'),
       h('p',{class:'small',style:'margin-top:0'},'Names you’ve lent books to who aren’t on Shelfmark. Add new ones from a book’s “Who has it” section.'),
       S.contacts.length ? h('div',{class:'friends'}, S.contacts.map(c=>{ const has = contactHolding(c.id);
@@ -413,19 +521,236 @@ function friendsView(){
       })) : h('p',{class:'small',text:'None yet.'})));
 }
 
-async function openFriendShelf(fr){
-  const body = h('div',{}, h('p',{class:'small',text:'Loading…'}));
-  openSheet(`${fr.name}’s shelf`, body);
+function borrowSections(){
+  // Without update 2, show the simple list with no review buttons.
+  if (!S.history) return [S.borrowed.length ? h('section',{}, h('h3',{},'Books you’re borrowing'), h('div',{class:'friends'}, S.borrowed.map(b=>h('div',{class:'friend'},
+    coverEl(b,'mini'), h('div',{class:'who'}, h('b',{text:b.title}), h('span',{text:`From ${b.owner_name}, since ${fmtDate(b.lent_at)}`})))))) : null];
+  const row = (b, line) => h('div',{class:'friend'}, coverEl(b,'mini'),
+    h('div',{class:'who'}, h('b',{text:b.title}), h('span',{text:line}),
+      b.my_rating ? h('span',{class:'stars-sm',text:'★'.repeat(b.my_rating)}) : null),
+    h('button',{class:'btn',onclick:()=>openBorrowReview(b)}, b.my_rating || b.my_review ? 'Edit review' : 'Review'));
+  const now = S.history.filter(b=>b.still_have), before = S.history.filter(b=>!b.still_have);
+  return [
+    now.length ? h('section',{}, h('h3',{},'Books you’re borrowing'), h('div',{class:'friends'}, now.map(b=>row(b, `From ${b.owner_name}, since ${fmtDate(b.last_lent_at)}`)))) : null,
+    before.length ? h('section',{}, h('h3',{},'Books you’ve borrowed before'), h('div',{class:'friends'}, before.map(b=>row(b, `From ${b.owner_name}, returned`)))) : null
+  ];
+}
+
+/* Stacked reviews: what you and your friends think of a book */
+function reviewsSection(bookId, { excludeMe=false, title='What friends think' } = {}){
+  const box = h('div',{class:'section'}, h('span',{class:'lbl'}, title), h('p',{class:'small',style:'margin:0',text:'Loading…'}));
+  (async()=>{
+    const { data, error } = await sb.rpc('book_reviews',{p_book:bookId});
+    if (error){ box.lastChild.textContent = error.code==='PGRST202' ? 'Run update-2-shared-reviews.sql in Supabase to see friends’ reviews.' : 'Couldn’t load reviews.'; return; }
+    const all = data || [];
+    const rated = all.filter(r=>r.rating>0);
+    const shown = all.filter(r=>!(excludeMe && r.is_me));
+    const avg = rated.length ? (rated.reduce((a,r)=>a+r.rating,0)/rated.length) : 0;
+    box.replaceChildren(...[
+      h('span',{class:'lbl'}, title),
+      rated.length > 1 ? h('p',{class:'avg'}, h('span',{class:'stars-sm',text:'★'}), ` ${avg.toFixed(1)} average from ${rated.length} ratings`) : null,
+      shown.length ? h('div',{class:'reviews'}, shown.map(r=>h('div',{class:'rev'},
+        h('div',{class:'avatar sm',style:`background:${spine(r.reviewer_name)}`,text:(r.reviewer_name[0]||'?').toUpperCase()}),
+        h('div',{class:'rev-body'},
+          h('div',{class:'rev-head'}, h('b',{text: r.is_me ? 'You' : r.reviewer_name}),
+            r.source==='borrowed' ? h('span',{class:'small',text:'borrowed a copy'}) : null,
+            r.rating ? h('span',{class:'stars-sm',text:'★'.repeat(r.rating)}) : null),
+          r.review ? h('p',{class:'rev-text',text:r.review}) : h('p',{class:'small',style:'margin:2px 0 0',text:'Rated it, no written review.'}),
+          h('span',{class:'small',text:fmtDate(r.updated_at)})))))
+        : h('p',{class:'small',style:'margin:0',text: excludeMe ? 'None of your friends have reviewed this yet.' : 'No reviews yet.'})
+    ].filter(Boolean));
+  })();
+  return box;
+}
+
+function openBorrowReview(b){
+  let rating = b.my_rating || 0;
+  const stars = h('div',{class:'stars',role:'group','aria-label':'Rating'});
+  const drawStars = () => stars.replaceChildren(...[1,2,3,4,5].map(n=>h('button',{type:'button',class:n<=rating?'on':'','aria-label':`${n} star${n>1?'s':''}`,
+    onclick:()=>{ rating = rating===n ? 0 : n; drawStars(); }},'★')));
+  drawStars();
+  const review = h('textarea',{class:'field',id:'borrowReviewBox',placeholder:'What did you think?'}); review.value = b.my_review || '';
+  const vis = h('select',{class:'field inline','aria-label':'Who can see your review'},
+    h('option',{value:'friends',text:'My friends',selected:b.my_visibility!=='private'}),
+    h('option',{value:'private',text:'Only me',selected:b.my_visibility==='private'}));
+  const msg = h('span',{class:'saved'});
+  const saveBtn = h('button',{class:'btn primary',onclick:async()=>{
+    saveBtn.disabled = true;
+    try{
+      const res = await run(sb.rpc('save_borrow_review',{p_book:b.book_id, p_rating:rating, p_review:review.value, p_visibility:vis.value}),"Your review didn't save. Try again.");
+      if (res==='saved'){ Object.assign(b,{my_rating:rating, my_review:review.value, my_visibility:vis.value}); msg.textContent='Review saved'; setTimeout(()=>msg.textContent='',1800);
+        reviews.replaceWith(reviews = reviewsSection(b.book_id,{excludeMe:true})); render(); }
+      else toast('You can only review books you’ve borrowed.');
+    }catch{} finally{ saveBtn.disabled = false; }
+  }},'Save review');
+  let reviews = reviewsSection(b.book_id,{excludeMe:true});
+  openSheet('', h('div',{},
+    h('div',{class:'detail-top'}, coverEl(b),
+      h('div',{}, h('h2',{text:b.title}), h('p',{class:'by',text:b.author?`by ${b.author}`:'Author unknown'}),
+        h('p',{class:'small',style:'margin:0',text: b.still_have ? `Borrowed from ${b.owner_name}` : `Borrowed from ${b.owner_name}, returned`}))),
+    h('div',{class:'section'}, h('span',{class:'lbl'},'Your rating'), stars),
+    h('div',{class:'section'}, h('label',{class:'lbl',for:'borrowReviewBox'},'Your review'), review,
+      h('div',{class:'row',style:'margin-top:8px'}, h('span',{class:'small'},'Who can see it:'), vis)),
+    h('div',{class:'section row'}, saveBtn, msg,
+      S.recs ? h('button',{class:'btn',onclick:()=>openRecommend(b)},'Recommend to a friend') : null),
+    reviews));
+}
+
+/* ================= Recommending ================= */
+function openRecommend(book, { preset=[], exclude=null } = {}){
+  const friends = friendsList().filter(f=>f.id!==exclude);
+  const chosen = new Set(preset.filter(id=>friends.some(f=>f.id===id)));
+  if (!friends.length){
+    openSheet('Recommend a book', h('p',{class:'small',text: exclude ? 'You don’t have any other friends on Shelfmark to recommend this to yet.' : 'Add a friend first, then you can recommend books to them.'}));
+    return;
+  }
+  const picks = h('div',{class:'chips',role:'group','aria-label':'Send to'});
+  const drawPicks = () => picks.replaceChildren(...friends.map(f=>h('button',{type:'button',class:'chip','aria-pressed':chosen.has(f.id),
+    onclick:()=>{ chosen.has(f.id) ? chosen.delete(f.id) : chosen.add(f.id); drawPicks(); }}, chosen.has(f.id) ? `✓ ${f.name}` : f.name)));
+  drawPicks();
+  const note = h('textarea',{class:'field',id:'recNote',maxlength:2000,placeholder:'What did you love about it, or why did it make you think of them?'});
+  const msg = h('p',{class:'status-msg'});
+  const send = h('button',{class:'btn primary',onclick:async()=>{
+    if (!chosen.size){ msg.className='status-msg err'; msg.textContent='Choose at least one friend.'; return; }
+    send.disabled = true; msg.className='status-msg'; msg.textContent='Sending…';
+    const sent = [], already = [], failed = [];
+    for (const id of chosen){
+      const f = friends.find(x=>x.id===id);
+      const { data, error } = await sb.rpc('recommend_book',{ p_recipient:id, p_title:book.title, p_author:book.author||null, p_isbn:book.isbn||null,
+        p_cover_url:book.cover_url||null, p_year:book.year||null, p_pages:book.pages||null, p_note:note.value });
+      if (error || !['sent','already_sent'].includes(data)) failed.push(f.name); else (data==='sent' ? sent : already).push(f.name);
+    }
+    const list = a => a.length<3 ? a.join(' and ') : a.slice(0,-1).join(', ')+', and '+a[a.length-1];
+    if (!failed.length){ closeSheet(); toast([sent.length?`Sent to ${list(sent)}.`:'', already.length?`You’d already recommended it to ${list(already)}.`:''].filter(Boolean).join(' ')); loadAll(); }
+    else { send.disabled = false; msg.className='status-msg err'; msg.textContent = `Couldn’t send to ${list(failed)}. Try again.`; }
+  }},'Send recommendation');
+  openSheet('Recommend a book', h('div',{},
+    h('div',{class:'result',style:'margin-bottom:18px'}, coverEl(book,'mini'),
+      h('div',{class:'info'}, h('b',{text:book.title}), h('span',{text:book.author||''}))),
+    h('span',{class:'lbl'},'Send to'), picks,
+    h('div',{class:'section'}, h('label',{class:'lbl',for:'recNote'},'Why would they like it? (optional)'), note),
+    h('div',{class:'section'}, send, msg)));
+}
+
+function openRecommendSearch(fr){
+  const input = h('input',{class:'field',type:'search',placeholder:'Title, author, or both','aria-label':'Search for a book'});
+  const msg = h('p',{class:'status-msg'}), results = h('div',{class:'results'});
+  const fromShelf = S.books.length ? h('div',{class:'section'}, h('span',{class:'lbl'},'Or pick from your shelf'),
+    h('div',{class:'results'}, S.books.slice(0,8).map(b=>h('div',{class:'result'}, coverEl(b,'mini'),
+      h('div',{class:'info'}, h('b',{text:b.title}), h('span',{text:b.author||''})),
+      h('button',{class:'btn',onclick:()=>openRecommend(b,{preset:[fr.id]})},'Choose'))))) : null;
+  let ctl = null;
+  const form = h('form',{class:'row',onsubmit:async e=>{
+    e.preventDefault(); const q = input.value.trim(); if(!q) return;
+    if (ctl) ctl.abort(); ctl = new AbortController();
+    results.replaceChildren(); msg.className='status-msg'; msg.textContent='Searching…';
+    try{
+      const list = await searchBooks(q, ctl.signal);
+      msg.textContent = list.length ? '' : 'No matches. Try different words.';
+      results.replaceChildren(...list.map(r=>h('div',{class:'result'}, coverEl(r,'mini'),
+        h('div',{class:'info'}, h('b',{text:r.title}), h('span',{text:[r.author,r.year].filter(Boolean).join(', ')})),
+        h('button',{class:'btn',onclick:()=>openRecommend(r,{preset:[fr.id]})},'Choose'))));
+    }catch(err){ if (err.name!=='AbortError'){ msg.className='status-msg err'; msg.textContent="The search didn't work. Check your connection and try again."; } }
+  }}, h('div',{style:'flex:1;min-width:180px'},input), h('button',{class:'btn primary',type:'submit'},'Search'));
+  openSheet(`Recommend a book to ${fr.name}`, h('div',{}, ...[form, msg, results, fromShelf].filter(Boolean)));
+}
+
+async function respondRequest(r, approve){
+  let res;
+  try{ res = await run(sb.rpc('respond_book_request',{p_id:r.id, p_approve:approve}),"Couldn't answer that request."); }catch{ return; }
+  toast({ approved:`Approved. “${r.title}” is now lent to ${r.requester_name}.`, declined:'Request declined.',
+    on_loan:`“${r.title}” is with someone else right now. Mark it returned first, then approve.`,
+    not_friends:`You’re no longer friends with ${r.requester_name}, so you can’t approve this.`,
+    not_found:'That request was already answered or cancelled.' }[res] || 'Done.');
+  await loadAll();
+  return res;
+}
+
+/* A friend's shelf, shown like your own library */
+function openFriendShelf(fr){
+  S.friend = { id:fr.id, name:fr.name, books:null, error:false, filter:'all', q:'' };
+  S.view = 'friend'; window.scrollTo(0,0); render();
+  loadFriendBooks();
+}
+async function loadFriendBooks(){
+  const F = S.friend; if (!F) return;
+  try{ F.books = await run(sb.rpc('friend_books',{p_friend:F.id}), "Couldn't load their shelf."); F.error = false; }
+  catch{ F.error = true; }
+  if (S.friend === F) render();
+}
+async function askToBorrow(b, btn){
+  const F = S.friend; btn.disabled = true;
   try{
-    const books = await run(sb.rpc('friend_books',{p_friend:fr.id}), "Couldn't load their shelf.");
-    body.replaceChildren(books.length ? h('div',{class:'results'}, books.map(b=>h('div',{class:'result top'},
-      coverEl(b,'mini'),
-      h('div',{class:'info'}, h('b',{text:b.title}),
-        h('span',{text:[b.author, STATUS[b.status]].filter(Boolean).join(', ')}),
+    const res = await run(sb.rpc('request_book',{p_book:b.id}),"Couldn't send that request.");
+    toast({ requested:`Asked ${F.name} to borrow “${b.title}”.`, already_requested:'You’ve already asked for this one.',
+      you_have_it:'You already have this book.', not_friends:`You’re no longer friends with ${F.name}.`,
+      not_found:'That book is no longer on their shelf.' }[res] || 'Done.');
+    await loadFriendBooks(); loadAll(); return true;
+  }catch{ btn.disabled = false; return false; }
+}
+async function cancelAsk(b, btn){
+  btn.disabled = true;
+  try{ await run(sb.rpc('cancel_book_request',{p_id:b.requested_id}),"Couldn't cancel that request."); toast('Request cancelled');
+    await loadFriendBooks(); loadAll(); return true; }
+  catch{ btn.disabled = false; return false; }
+}
+
+function friendShelfView(){
+  const F = S.friend;
+  const back = h('button',{class:'btn ghost back',onclick:()=>{ S.view='friends'; S.friend=null; render(); }},'← Friends');
+  const head = h('div',{class:'friend-head'}, back,
+    h('div',{class:'row',style:'justify-content:space-between;align-items:center'},
+      h('h2',{text:`${F.name}’s shelf`}),
+      S.recs ? h('button',{class:'btn',onclick:()=>openRecommendSearch({id:F.id,name:F.name})},`Recommend a book`) : null),
+    F.books ? h('p',{class:'small',text:`${F.books.length} book${F.books.length===1?'':'s'}. Tap one to see details or ask to borrow it.`}) : null);
+  if (F.error) return h('div',{}, head, h('p',{class:'status-msg err',text:"Couldn't load their shelf."}), h('button',{class:'btn',onclick:loadFriendBooks},'Try again'));
+  if (!F.books) return h('div',{}, head, h('p',{class:'small',text:'Loading…'}));
+  const all = F.books;
+  if (!all.length) return h('div',{}, head, h('div',{class:'empty'}, h('h2',{text:'Nothing here yet'}), h('p',{text:`${F.name} hasn’t added any books.`})));
+  const counts = {all:all.length, available:0, asked:0};
+  all.forEach(b=>{ counts[b.status]=(counts[b.status]||0)+1; if(!b.on_loan) counts.available++; if(b.requested_id) counts.asked++; });
+  const filters = [['all','All'],['available','Available'],['reading','Reading'],['want','Want to read'],['read','Read'],['dnf',"Didn't finish"],['asked','You asked']]
+    .filter(([k])=>k==='all'||counts[k]);
+  if (!filters.some(([k])=>k===F.filter)) F.filter='all';
+  const q = F.q.trim().toLowerCase();
+  const list = all.filter(b=>{
+    if (F.filter==='available' ? b.on_loan : F.filter==='asked' ? !b.requested_id : F.filter!=='all' && b.status!==F.filter) return false;
+    return !q || (b.title||'').toLowerCase().includes(q) || (b.author||'').toLowerCase().includes(q);
+  });
+  return h('div',{}, head,
+    h('div',{class:'toolbar'},
+      h('div',{class:'chips'}, filters.map(([k,l])=>h('button',{class:'chip','aria-pressed':F.filter===k,onclick:()=>{F.filter=k;render();}},l,h('span',{class:'n',text:counts[k]})))),
+      h('input',{class:'field',id:'friendSearch',type:'search',placeholder:'Filter by title or author',value:F.q,oninput:e=>{F.q=e.target.value;render();}})),
+    list.length ? h('div',{class:'shelf'}, list.map(b=>h('button',{class:'book',onclick:()=>openFriendBook(b),'aria-label':`${b.title}${b.author?' by '+b.author:''}`},
+      coverEl(b),
+      h('div',{class:'meta'}, h('div',{text:STATUS[b.status]}),
         b.rating ? h('div',{class:'stars-sm',text:'★'.repeat(b.rating)}) : null,
-        b.on_loan ? h('div',{class:'tag',text:'Lent out'}) : null,
-        b.review ? h('p',{class:'shared-review',text:b.review}) : null)))) : h('p',{class:'small',text:'Their shelf is empty so far.'}));
-  }catch{ body.replaceChildren(h('p',{class:'status-msg err',text:"Couldn't load their shelf. Try again."})); }
+        b.requested_id ? h('div',{class:'tag',text:'You asked to borrow'}) : b.on_loan ? h('div',{class:'tag muted',text:'Lent out'}) : null))))
+      : h('p',{class:'small',text:'No books match that filter.'}));
+}
+
+function openFriendBook(b){
+  const F = S.friend;
+  const action = h('div',{class:'row'});
+  const draw = () => {
+    const cur = (S.friend && S.friend.books || []).find(x=>x.id===b.id) || b;
+    action.replaceChildren(...[
+      cur.requested_id
+        ? h('button',{class:'btn',onclick:async e=>{ if (await cancelAsk(cur,e.currentTarget)) draw(); }},'Cancel request')
+        : h('button',{class:'btn primary',onclick:async e=>{ if (await askToBorrow(cur,e.currentTarget)) draw(); }},'Ask to borrow'),
+      cur.requested_id ? h('span',{class:'small',text:`Waiting for ${F.name} to reply.`})
+        : cur.on_loan ? h('span',{class:'small',text:`Lent out right now. ${F.name} can approve your request once it’s back.`}) : null
+    ].filter(Boolean));
+  };
+  draw();
+  openSheet('', h('div',{},
+    h('div',{class:'detail-top'}, coverEl(b),
+      h('div',{}, h('h2',{text:b.title}), h('p',{class:'by',text:b.author?`by ${b.author}`:'Author unknown'}),
+        h('p',{class:'small',style:'margin:0',text:`On ${F.name}’s shelf`}))),
+    h('div',{class:'section'}, h('span',{class:'lbl'},`${F.name}’s status`), h('p',{style:'margin:0',text:STATUS[b.status]})),
+    h('div',{class:'section'}, action),
+    S.recs ? h('div',{class:'section'}, h('button',{class:'btn',onclick:()=>openRecommend(b,{exclude:F.id})},'Recommend to a friend')) : null,
+    reviewsSection(b.id,{title:'What you and your friends think'})));
 }
 
 /* ================= Account ================= */
@@ -485,12 +810,12 @@ function openDetail(id){
   const review = h('textarea',{class:'field',id:'reviewBox',placeholder:'What did you think?'});
   review.value = book.review || '';
   const flush = async () => { clearTimeout(t); t=null;
-    if ((book.review||'') !== review.value){ try{ await save({review:review.value}, "Your review didn't save. Try again."); savedEl.textContent='Review saved'; setTimeout(()=>savedEl.textContent='',1800); }catch{} } };
+    if ((book.review||'') !== review.value){ try{ await save({review:review.value, reviewed_at:new Date().toISOString()}, "Your review didn't save. Try again."); savedEl.textContent='Review saved'; setTimeout(()=>savedEl.textContent='',1800); }catch{} } };
   review.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(flush, 900); });
   review.addEventListener('blur', flush);
   const vis = h('select',{class:'field inline','aria-label':'Who can see your review'},
-    h('option',{value:'private',text:'Only me',selected:book.review_visibility!=='friends'&&book.review_visibility!=='public'}),
-    h('option',{value:'friends',text:'My friends',selected:book.review_visibility==='friends'||book.review_visibility==='public'}));
+    h('option',{value:'friends',text:'My friends',selected:book.review_visibility!=='private'}),
+    h('option',{value:'private',text:'Only me',selected:book.review_visibility==='private'}));
   vis.addEventListener('change', async()=>{ await save({review_visibility:vis.value}); toast(vis.value==='friends'?'Friends can now see this review':'This review is now private'); });
 
   const lendBox = h('div');
@@ -516,7 +841,14 @@ function openDetail(id){
       else if (v.startsWith('c:')){ const c = S.contacts.find(x=>'c:'+x.id===v); await lend({contact_id:c.id, borrower_name:c.name}); }
     });
     const past = (book.loans||[]).filter(l=>l.returned_at).sort((a,b)=>new Date(b.lent_at)-new Date(a.lent_at)).slice(0,5);
+    const asks = incomingRequests().filter(r=>r.book_id===book.id);
+    const askEls = asks.map(r=>h('div',{class:'ask'},
+      h('span',{text:`${r.requester_name} asked to borrow this on ${fmtDate(r.created_at)}`}),
+      h('div',{class:'row'},
+        h('button',{class:'btn primary',onclick:async()=>{ const res = await respondRequest(r,true); book = S.books.find(b=>b.id===id) || book; drawLend(); }},'Approve'),
+        h('button',{class:'btn ghost',onclick:async()=>{ await respondRequest(r,false); drawLend(); }},'Decline'))));
     lendBox.replaceChildren(...[
+      ...askEls,
       h('p',{class:'holder'}, who ? `With ${who} since ${fmtDate(open.lent_at)}` : 'On your shelf'),
       h('div',{class:'row'}, h('div',{style:'flex:1;min-width:200px'},sel),
         open ? h('button',{class:'btn',onclick:async()=>{ await run(sb.from('loans').update({returned_at:new Date().toISOString()}).eq('id',open.id),"Couldn't mark it returned.");
@@ -538,17 +870,22 @@ function openDetail(id){
   drawLend();
 
   const facts = [book.year, book.pages?`${book.pages} pages`:null, book.isbn?`ISBN ${book.isbn}`:null].filter(Boolean).join(', ');
+  const recFrom = (S.recs||[]).filter(r=>r.recipient_id===me() && r.user_book_id===book.id);
   openSheet('', h('div',{},
     h('div',{class:'detail-top'}, coverEl(book),
       h('div',{}, h('h2',{text:book.title}), h('p',{class:'by',text:book.author?`by ${book.author}`:'Author unknown'}),
         facts ? h('p',{class:'small',style:'margin:0',text:facts}) : null,
         h('p',{class:'small',text:`Added ${fmtDate(book.added_at)}`}))),
+    recFrom.map(r=>h('div',{class:'rec-from'}, h('b',{text:`Recommended by ${r.sender_name}`}),
+      r.note ? h('p',{class:'rev-text',text:r.note}) : null)),
     h('div',{class:'section'}, h('span',{class:'lbl'},'Reading status'), statusSeg),
     h('div',{class:'section'}, h('span',{class:'lbl'},'Your rating'), stars),
     h('div',{class:'section'},
       h('div',{class:'row',style:'justify-content:space-between;margin-bottom:8px'}, h('label',{class:'lbl',for:'reviewBox',style:'margin:0'},'Review'), savedEl),
       review,
       h('div',{class:'row',style:'margin-top:8px'}, h('span',{class:'small'},'Who can see it:'), vis)),
+    S.recs ? h('div',{class:'section'}, h('button',{class:'btn',onclick:async()=>{ await flush(); openRecommend(book); }},'Recommend to a friend')) : null,
+    reviewsSection(book.id,{excludeMe:true}),
     h('div',{class:'section'}, h('span',{class:'lbl'},'Who has it'), lendBox),
     h('div',{class:'section row',style:'justify-content:space-between'},
       h('button',{class:'btn',onclick:async()=>{ await flush(); editBook(book); }},'Edit details'),
@@ -747,12 +1084,12 @@ sb.auth.onAuthStateChange((_event, session) => {
   S.user = user; currentUserId = user && user.id;
   if (!changed) return;
   setTimeout(() => {
-    Object.assign(S, { books:[], contacts:[], friendships:[], profiles:{}, borrowed:[], loaded:false, view:'library', filter:'all', q:'' });
+    Object.assign(S, { books:[], contacts:[], friendships:[], profiles:{}, borrowed:[], requests:[], shelfCounts:{}, loaded:false, view:'library', filter:'all', q:'', holder:'', friend:null });
     render();
     if (user) loadAll();
   }, 0);
 });
-document.addEventListener('visibilitychange', ()=>{ if (document.visibilityState==='visible' && S.user && !$('#backdrop')) loadAll(); });
+document.addEventListener('visibilitychange', ()=>{ if (document.visibilityState==='visible' && S.user && !$('#backdrop')){ loadAll(); if (S.view==='friend') loadFriendBooks(); } });
 </script>
 </body>
 </html>
