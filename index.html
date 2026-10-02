@@ -1,0 +1,758 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1F6F5C">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Shelfmark">
+<title>Shelfmark</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,400;7..72,600;7..72,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<style>
+:root{
+  --bg:#EAEEF3; --surface:#FFFFFF; --raised:#F5F7FA; --ink:#16213A; --muted:#586277; --line:#D3D9E2;
+  --accent:#1F6F5C; --accent-ink:#FFFFFF; --accent-soft:#DCEEE8; --star:#D99A1E; --danger:#B23A3A; --shelf:#C9CFD9;
+  --serif:"Literata",Georgia,"Times New Roman",serif;
+  --sans:"Instrument Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#10151F; --surface:#19202D; --raised:#212a3a; --ink:#E6EBF3; --muted:#9AA4B8; --line:#2D374A;
+    --accent:#4DB396; --accent-ink:#0C1A15; --accent-soft:#1D3A32; --star:#EBB443; --danger:#E27171; --shelf:#2A3345;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#10151F; --surface:#19202D; --raised:#212a3a; --ink:#E6EBF3; --muted:#9AA4B8; --line:#2D374A;
+  --accent:#4DB396; --accent-ink:#0C1A15; --accent-soft:#1D3A32; --star:#EBB443; --danger:#E27171; --shelf:#2A3345;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 var(--sans);-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:1040px;margin:0 auto;padding:0 20px 96px}
+
+header.top{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:28px 0 18px;flex-wrap:wrap}
+.brand h1{font:700 34px/1.05 var(--serif);letter-spacing:-.01em;margin:0}
+.brand p{margin:6px 0 0;color:var(--muted);font-size:15px}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:9px 14px;font-weight:500;display:inline-flex;align-items:center;gap:8px}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.btn.primary:hover{filter:brightness(1.06)}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+.btn.danger{color:var(--danger)}
+.btn:disabled{opacity:.55;cursor:default}
+
+nav.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:18px}
+nav.tabs button{background:none;border:0;padding:10px 14px;color:var(--muted);font-weight:500;border-bottom:2px solid transparent;margin-bottom:-1px}
+nav.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink)}
+
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:22px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;flex:1 1 auto}
+.chip{border:1px solid var(--line);background:transparent;border-radius:999px;padding:5px 12px;font-size:14px;color:var(--muted)}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.chip .n{opacity:.7;margin-left:4px}
+.field{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:9px 12px;width:100%}
+.toolbar .field{max-width:260px}
+
+/* The shelf */
+.shelf{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:30px 18px}
+.book{background:none;border:0;padding:0;text-align:left;display:flex;flex-direction:column;gap:8px}
+.cover{aspect-ratio:2/3;border-radius:3px 7px 7px 3px;padding:14px 12px 12px 18px;position:relative;overflow:hidden;
+  display:flex;flex-direction:column;justify-content:space-between;color:#fff;
+  box-shadow:inset 6px 0 0 rgba(0,0,0,.18), 0 1px 0 var(--shelf), 0 10px 18px -12px rgba(10,20,40,.55);transition:transform .15s}
+.book:hover .cover{transform:translateY(-3px)}
+.cover .t{font:600 16px/1.2 var(--serif);overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
+.cover .a{font-size:12px;opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cover .rule{position:absolute;left:18px;right:12px;top:50%;border-top:1px solid rgba(255,255,255,.35)}
+.meta{font-size:13px;color:var(--muted);line-height:1.35}
+.meta .lent{color:var(--ink);font-weight:500}
+.stars-sm{color:var(--star);letter-spacing:1px;font-size:12px}
+
+.empty{padding:56px 20px;text-align:center;border:1px dashed var(--line);border-radius:14px;background:var(--surface)}
+.empty h2{font:600 22px/1.3 var(--serif);margin:0 0 6px}
+.empty p{color:var(--muted);margin:0 auto 18px;max-width:42ch}
+.notice{font-size:13px;color:var(--muted);margin:-8px 0 16px}
+
+/* Friends */
+.friends{display:grid;gap:10px;max-width:640px}
+.friend{display:flex;gap:12px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.avatar{width:38px;height:38px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;font-weight:600;color:#fff;overflow:hidden}
+.avatar img{width:100%;height:100%;object-fit:cover}
+.friend .who{flex:1;min-width:0}
+.friend .who b{display:block;font-weight:600}
+.friend .who span{font-size:14px;color:var(--muted)}
+.picker{position:relative;max-width:640px;margin-bottom:18px}
+.menu{position:absolute;z-index:5;left:0;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 30px -10px rgba(0,0,0,.3);overflow:hidden}
+.menu button{display:flex;width:100%;gap:10px;align-items:center;background:none;border:0;padding:9px 12px;text-align:left}
+.menu button:hover,.menu button:focus-visible{background:var(--raised)}
+.menu .hint{padding:8px 12px;font-size:13px;color:var(--muted)}
+
+/* Sheet */
+.backdrop{position:fixed;inset:0;background:rgba(8,12,20,.45);z-index:20;display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--surface);width:100%;max-width:620px;max-height:92%;overflow:auto;border-radius:18px 18px 0 0;
+  padding:22px 22px calc(24px + env(safe-area-inset-bottom,0px));animation:rise .2s ease-out}
+@media (min-width:700px){.backdrop{align-items:center}.sheet{border-radius:16px;max-height:88%}}
+@keyframes rise{from{transform:translateY(24px);opacity:.4}}
+@media (prefers-reduced-motion:reduce){.sheet{animation:none}.cover{transition:none}}
+.sheet-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px}
+.sheet-head h2{font:600 24px/1.2 var(--serif);margin:0}
+.close{background:none;border:0;font-size:26px;line-height:1;color:var(--muted);padding:0 4px}
+.seg{display:flex;background:var(--raised);border-radius:10px;padding:3px;gap:2px;flex-wrap:wrap}
+.seg button{flex:1;border:0;background:none;border-radius:8px;padding:8px 10px;font-size:14px;color:var(--muted);font-weight:500;white-space:nowrap}
+.seg button[aria-pressed="true"],.seg button[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.section{margin-top:22px}
+.section > label,.lbl{display:block;font-size:14px;font-weight:600;margin-bottom:8px}
+.stars{display:flex;gap:2px}
+.stars button{background:none;border:0;font-size:28px;line-height:1;color:var(--line);padding:0 2px}
+.stars button.on{color:var(--star)}
+textarea.field{min-height:110px;resize:vertical;line-height:1.55}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid2 .full{grid-column:1/-1}
+.small{font-size:13px;color:var(--muted)}
+.detail-top{display:flex;gap:18px}
+.detail-top .cover{width:110px;flex:0 0 auto}
+.detail-top .cover .t{font-size:14px}
+.detail-top h2{font:700 24px/1.2 var(--serif);margin:0 0 4px}
+.detail-top .by{color:var(--muted);margin:0 0 8px}
+.saved{font-size:13px;color:var(--accent);min-height:1em}
+
+.scan-box{position:relative;background:#000;border-radius:12px;overflow:hidden;aspect-ratio:4/3;max-height:320px;width:100%}
+.scan-box video{width:100%;height:100%;object-fit:cover;display:block}
+.scan-box .aim{position:absolute;left:12%;right:12%;top:38%;bottom:38%;border:2px solid rgba(255,255,255,.85);border-radius:8px;box-shadow:0 0 0 999px rgba(0,0,0,.28)}
+.status-msg{font-size:14px;color:var(--muted);margin:10px 0}
+.status-msg.err{color:var(--danger)}
+.results{display:grid;gap:8px;margin-top:14px}
+.result{display:flex;gap:12px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.result .mini{width:34px;aspect-ratio:2/3;border-radius:2px 4px 4px 2px;flex:0 0 auto}
+.result .info{flex:1;min-width:0}
+.result .info b{display:block;font-family:var(--serif);font-weight:600}
+.result .info span{font-size:14px;color:var(--muted)}
+.divider{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px;margin:18px 0}
+.divider::before,.divider::after{content:"";flex:1;border-top:1px solid var(--line)}
+.hidden{display:none !important}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:14px;z-index:40}
+
+
+.cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.mini{width:40px;flex:0 0 auto;aspect-ratio:2/3;border-radius:2px 4px 4px 2px;position:relative;overflow:hidden;box-shadow:inset 3px 0 0 rgba(0,0,0,.18)}
+.mini .t,.mini .a,.mini .rule{display:none}
+.mini img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.auth{max-width:420px;margin:0 auto;padding:12vh 20px 60px}
+.wordmark{font:700 44px/1 var(--serif);letter-spacing:-.015em;margin:0 0 10px}
+.lede{color:var(--muted);margin:0 0 28px;max-width:36ch}
+.auth-form{display:grid;gap:14px}
+.auth-form .btn{justify-content:center;padding:11px}
+.acct{width:40px;height:40px;border-radius:50%;border:0;color:#fff;font-weight:600;font-size:16px}
+.friends-page{display:grid;gap:30px;max-width:680px}
+.friends-page h3{font:600 20px/1.3 var(--serif);margin:0 0 10px}
+.status-msg.ok{color:var(--accent)}
+.holder{margin:0 0 10px;font-weight:500}
+.history{margin-top:14px;display:grid;gap:2px}
+select.field.inline{width:auto;padding:5px 10px;font-size:14px}
+.danger-zone{border-top:1px solid var(--line);padding-top:18px}
+.result.top{align-items:flex-start}
+.tag{display:inline-block;font-size:12px;background:var(--accent-soft);color:var(--ink);border-radius:6px;padding:1px 7px;margin-top:4px}
+.shared-review{margin:6px 0 0;font-size:14px;white-space:pre-wrap;border-left:2px solid var(--line);padding-left:10px}
+.friend .btn{flex:0 0 auto}
+@media (max-width:520px){.friend:has(.btn){flex-wrap:wrap}.friend:has(.btn) .who{flex-basis:calc(100% - 50px)}}
+</style>
+</head>
+<body>
+<div id="app"><p style="text-align:center;padding:30vh 20px;color:#586277;font-family:system-ui,sans-serif">Opening Shelfmark…</p></div>
+<script>
+/* ================= Settings ================= */
+const SUPABASE_URL = 'https://xoeojsxjespynzspqaxs.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_A2aUP4tAhUrwAiT0U-czFA_qkiR4SyW';
+
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+/* ================= Helpers ================= */
+const $ = s => document.querySelector(s);
+function h(tag, attrs, ...kids){
+  const el = document.createElement(tag);
+  for (const [k,v] of Object.entries(attrs||{})){
+    if (v == null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k === 'text') el.textContent = v;
+    else if (k === 'style') el.style.cssText = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? (k.startsWith('aria-') ? 'true' : '') : v);
+  }
+  for (const c of kids.flat()) if (c != null && c !== false) el.append(c.nodeType ? c : String(c));
+  return el;
+}
+const SPINES = ['#2E4A7D','#7A2E3B','#2F6B5A','#8A5A1F','#4B3B78','#355F7A','#6B3F5E','#3E5B2F','#9A4A2A','#26475A'];
+function spine(t){ let x=0; for (const c of (t||'?')) x=(x*31+c.charCodeAt(0))>>>0; return SPINES[x%SPINES.length]; }
+const STATUS = {want:'Want to read', reading:'Reading', read:'Read', dnf:"Didn't finish"};
+function toast(msg){ const t=h('div',{class:'toast',role:'status',text:msg}); document.body.append(t); setTimeout(()=>t.remove(),2800); }
+const fmtDate = ts => ts ? new Date(ts).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : '';
+const parseYear = s => { const m = String(s||'').match(/\d{4}/); return m ? +m[0] : null; };
+function isbn10to13(s){ const c='978'+s.slice(0,9); let sum=0; for(let i=0;i<12;i++) sum+=+c[i]*(i%2?3:1); return c+((10-sum%10)%10); }
+function normalizeIsbn(raw){
+  const s = String(raw||'').replace(/[^0-9Xx]/g,'').toUpperCase();
+  if (/^97[89]\d{10}$/.test(s)) return s;
+  if (/^\d{9}[\dX]$/.test(s)) return isbn10to13(s);
+  return null;
+}
+async function run(query, failMsg){
+  const { data, error } = await query;
+  if (error){ console.error(error); toast(failMsg || 'Something went wrong. Try again.'); throw error; }
+  return data;
+}
+
+/* ================= State ================= */
+const S = { user:null, books:[], contacts:[], friendships:[], profiles:{}, borrowed:[], loaded:false,
+            view:'library', filter:'all', q:'' };
+const me = () => S.user && S.user.id;
+const myName = () => (S.profiles[me()]||{}).display_name || 'You';
+const openLoan = b => (b.loans||[]).find(l=>!l.returned_at);
+function loanName(l){
+  if (!l) return null;
+  if (l.borrower_id) return (S.profiles[l.borrower_id]||{}).display_name || l.borrower_name || 'A friend';
+  if (l.contact_id){ const c = S.contacts.find(x=>x.id===l.contact_id); if (c) return c.name; }
+  return l.borrower_name || 'Someone';
+}
+function friendsList(){
+  return S.friendships.filter(f=>f.status==='accepted')
+    .map(f=>{ const id = f.requester===me() ? f.addressee : f.requester; return { id, fid:f.id, name:(S.profiles[id]||{}).display_name || 'A friend' }; })
+    .sort((a,b)=>a.name.localeCompare(b.name));
+}
+
+async function loadAll(){
+  try{
+    const [books, contacts, friendships, profiles, borrowed] = await Promise.all([
+      run(sb.from('user_books').select('*, loans(id,borrower_id,contact_id,borrower_name,lent_at,returned_at)').order('added_at',{ascending:false}), "Couldn't load your library."),
+      run(sb.from('contacts').select('*').order('name'), "Couldn't load your contacts."),
+      run(sb.from('friendships').select('*'), "Couldn't load your friends."),
+      run(sb.from('profiles').select('id,display_name'), "Couldn't load your friends."),
+      run(sb.rpc('borrowed_books'), "Couldn't load borrowed books.")
+    ]);
+    Object.assign(S, { books, contacts, friendships, borrowed, loaded:true, profiles:Object.fromEntries(profiles.map(p=>[p.id,p])) });
+  }catch{ S.loaded = true; }
+  render();
+}
+
+/* ================= Sign in ================= */
+function authView(){
+  let mode = 'signin';
+  const msg = h('p',{class:'status-msg'});
+  const box = h('div');
+  const draw = () => {
+    const signup = mode==='signup';
+    const form = h('form',{class:'auth-form',onsubmit:async e=>{
+      e.preventDefault();
+      const v = n => form.querySelector(`[name="${n}"]`).value.trim();
+      const btn = form.querySelector('button[type=submit]'); btn.disabled = true;
+      msg.className='status-msg'; msg.textContent = signup ? 'Creating your account…' : 'Signing in…';
+      try{
+        if (signup){
+          if (!v('name')){ msg.className='status-msg err'; msg.textContent='Enter your name so friends can recognize you.'; return; }
+          const { data, error } = await sb.auth.signUp({ email:v('email'), password:form.querySelector('[name=password]').value, options:{ data:{ display_name:v('name') } } });
+          if (error) throw error;
+          if (!data.session){ msg.textContent='Account created. Check your email for a confirmation link, then sign in.'; mode='signin'; }
+        } else {
+          const { error } = await sb.auth.signInWithPassword({ email:v('email'), password:form.querySelector('[name=password]').value });
+          if (error) throw error;
+        }
+      }catch(err){
+        msg.className='status-msg err';
+        const m = String(err.message||'');
+        msg.textContent = /invalid login/i.test(m) ? 'That email and password don’t match. Check them and try again.'
+          : /already registered/i.test(m) ? 'There’s already an account with that email. Sign in instead.'
+          : /password/i.test(m) ? 'Choose a password with at least 6 characters.'
+          : /email/i.test(m) ? 'Enter a valid email address.' : m || 'Something went wrong. Try again.';
+      }finally{ btn.disabled = false; }
+    }},
+      signup ? h('div',{}, h('label',{class:'lbl',for:'a_name'},'Your name'), h('input',{class:'field',id:'a_name',name:'name',autocomplete:'name',required:true,maxlength:60})) : null,
+      h('div',{}, h('label',{class:'lbl',for:'a_email'},'Email'), h('input',{class:'field',id:'a_email',name:'email',type:'email',autocomplete:'email',required:true})),
+      h('div',{}, h('label',{class:'lbl',for:'a_pw'},'Password'), h('input',{class:'field',id:'a_pw',name:'password',type:'password',minlength:6,autocomplete:signup?'new-password':'current-password',required:true})),
+      h('button',{class:'btn primary',type:'submit'}, signup ? 'Create account' : 'Sign in'));
+    box.replaceChildren(
+      h('div',{class:'seg',role:'tablist',style:'margin-bottom:18px'},
+        h('button',{role:'tab','aria-selected':!signup,onclick:()=>{mode='signin';msg.textContent='';draw();}},'Sign in'),
+        h('button',{role:'tab','aria-selected':signup,onclick:()=>{mode='signup';msg.textContent='';draw();}},'Create account')),
+      form, msg);
+  };
+  draw();
+  return h('div',{class:'auth'},
+    h('h1',{class:'wordmark',text:'Shelfmark'}),
+    h('p',{class:'lede',text:'Keep track of the books you own, what you thought of them, and who borrowed them.'}),
+    box);
+}
+
+/* ================= Main render ================= */
+function render(){
+  const app = $('#app');
+  if (!S.user){ app.replaceChildren(authView()); return; }
+  const focusedId = document.activeElement && document.activeElement.id;
+  const caret = document.activeElement && document.activeElement.selectionStart;
+  const lent = S.books.filter(openLoan).length;
+  const incoming = S.friendships.filter(f=>f.status==='pending' && f.addressee===me()).length;
+  app.replaceChildren(h('div',{class:'wrap'},
+    h('header',{class:'top'},
+      h('div',{class:'brand'}, h('h1',{text:'Shelfmark'}),
+        h('p',{text: !S.loaded ? 'Opening your library…' : S.books.length ? `${S.books.length} book${S.books.length===1?'':'s'} on your shelf${lent?`, ${lent} lent out`:''}` : 'A home for every book you own'})),
+      h('div',{class:'row'},
+        h('button',{class:'btn primary',onclick:()=>openAdd('scan')},'+ Add a book'),
+        h('button',{class:'acct',onclick:openAccount,'aria-label':'Your account',style:`background:${spine(myName())}`,text:(myName()[0]||'?').toUpperCase()}))),
+    h('nav',{class:'tabs',role:'tablist'},
+      [['library','Library'],['friends', incoming ? `Friends (${incoming})` : 'Friends']].map(([k,l])=>
+        h('button',{role:'tab','aria-selected':S.view===k,onclick:()=>{S.view=k;render();}},l))),
+    h('main',{}, S.view==='library' ? libraryView() : friendsView())));
+  if (focusedId){ const el=document.getElementById(focusedId); if(el){ el.focus(); try{el.setSelectionRange(caret,caret);}catch{} } }
+}
+
+function coverEl(b, cls='cover'){
+  const el = h('div',{class:cls,style:`background:${spine(b.title)}`},
+    h('div',{class:'t',text:b.title||'Untitled'}), h('div',{class:'rule'}), h('div',{class:'a',text:b.author||''}));
+  if (b.cover_url){
+    const img = h('img',{src:b.cover_url,alt:'',loading:'lazy',referrerpolicy:'no-referrer'});
+    img.onload = () => { if (img.naturalWidth < 10) img.remove(); else el.classList.add('has-img'); };
+    img.onerror = () => img.remove();
+    el.append(img);
+  }
+  return el;
+}
+
+function libraryView(){
+  if (!S.loaded) return h('p',{class:'small',text:'Loading…'});
+  const all = S.books;
+  if (!all.length) return h('div',{class:'empty'},
+    h('h2',{text:'Your shelf is empty'}),
+    h('p',{text:'Scan the barcode on the back of a book, or search by title, to add your first one.'}),
+    h('button',{class:'btn primary',onclick:()=>openAdd('scan')},'Scan a barcode'),' ',
+    h('button',{class:'btn',onclick:()=>openAdd('search')},'Search by title'));
+  const counts = {all:all.length, lent:0};
+  all.forEach(b=>{ counts[b.status]=(counts[b.status]||0)+1; if(openLoan(b)) counts.lent++; });
+  const filters = [['all','All'],['reading','Reading'],['want','Want to read'],['read','Read'],['dnf',"Didn't finish"],['lent','Lent out']].filter(([k])=>k==='all'||counts[k]);
+  if (!filters.some(([k])=>k===S.filter)) S.filter='all';
+  const q = S.q.trim().toLowerCase();
+  const list = all.filter(b=>{
+    if (S.filter==='lent' ? !openLoan(b) : S.filter!=='all' && b.status!==S.filter) return false;
+    return !q || (b.title||'').toLowerCase().includes(q) || (b.author||'').toLowerCase().includes(q);
+  });
+  return h('div',{},
+    h('div',{class:'toolbar'},
+      h('div',{class:'chips'}, filters.map(([k,l])=>h('button',{class:'chip','aria-pressed':S.filter===k,onclick:()=>{S.filter=k;render();}},l,h('span',{class:'n',text:counts[k]})))),
+      h('input',{class:'field',id:'libSearch',type:'search',placeholder:'Filter by title or author',value:S.q,oninput:e=>{S.q=e.target.value;render();}})),
+    list.length ? h('div',{class:'shelf'}, list.map(b=>{
+      const who = loanName(openLoan(b));
+      return h('button',{class:'book',onclick:()=>openDetail(b.id),'aria-label':`${b.title}${b.author?' by '+b.author:''}`},
+        coverEl(b),
+        h('div',{class:'meta'}, h('div',{text:STATUS[b.status]}),
+          b.rating ? h('div',{class:'stars-sm',text:'★'.repeat(b.rating)}) : null,
+          who ? h('div',{class:'lent',text:`With ${who}`}) : null));
+    })) : h('p',{class:'small',text:'No books match that filter.'}));
+}
+
+/* ================= Friends ================= */
+function friendsView(){
+  if (!S.loaded) return h('p',{class:'small',text:'Loading…'});
+  const friends = friendsList();
+  const incoming = S.friendships.filter(f=>f.status==='pending' && f.addressee===me());
+  const outgoing = S.friendships.filter(f=>f.status==='pending' && f.requester===me());
+  const name = id => (S.profiles[id]||{}).display_name || 'Someone';
+  const avatar = n => h('div',{class:'avatar',style:`background:${spine(n)}`,text:(n[0]||'?').toUpperCase()});
+
+  const emailIn = h('input',{class:'field',id:'friendEmail',type:'email',placeholder:'Their email address','aria-label':'Friend’s email address'});
+  const addMsg = h('p',{class:'status-msg'});
+  const addForm = h('form',{class:'row',onsubmit:async e=>{
+    e.preventDefault(); const email = emailIn.value.trim(); if(!email) return;
+    addMsg.className='status-msg'; addMsg.textContent='Sending…';
+    try{
+      const r = await run(sb.rpc('send_friend_request',{p_email:email}), "Couldn't send that request.");
+      const copy = { sent:'Request sent. They’ll see it the next time they open Shelfmark.', accepted:'They’d already asked you, so you’re now friends.',
+        already_sent:'You’ve already sent them a request.', already_friends:'You’re already friends.',
+        not_found:'No one has signed up with that email yet. Send them the link to this site, then try again once they’ve made an account.',
+        self:'That’s your own email.' }[r] || 'Done.';
+      addMsg.className = ['sent','accepted'].includes(r) ? 'status-msg ok' : 'status-msg err'; addMsg.textContent = copy;
+      if (['sent','accepted'].includes(r)){ emailIn.value=''; await loadAll(); }
+    }catch{ addMsg.textContent=''; }
+  }}, h('div',{style:'flex:1;min-width:200px'},emailIn), h('button',{class:'btn primary',type:'submit'},'Send request'));
+
+  const holding = id => S.books.filter(b=>{ const l=openLoan(b); return l && l.borrower_id===id; });
+  const contactHolding = id => S.books.filter(b=>{ const l=openLoan(b); return l && l.contact_id===id; });
+
+  return h('div',{class:'friends-page'},
+    h('section',{}, h('h3',{},'Add a friend'),
+      h('p',{class:'small',style:'margin-top:0'},'Friends can see your shelf and the reviews you choose to share with them.'), addForm, addMsg),
+    incoming.length ? h('section',{}, h('h3',{},'Friend requests'), h('div',{class:'friends'}, incoming.map(f=>h('div',{class:'friend'}, avatar(name(f.requester)),
+      h('div',{class:'who'}, h('b',{text:name(f.requester)}), h('span',{text:'Wants to be friends'})),
+      h('button',{class:'btn primary',onclick:async()=>{ await run(sb.rpc('accept_friend_request',{p_id:f.id}),"Couldn't accept that request."); loadAll(); }},'Accept'),
+      h('button',{class:'btn ghost',onclick:async()=>{ await run(sb.from('friendships').delete().eq('id',f.id),"Couldn't decline that request."); loadAll(); }},'Decline'))))) : null,
+    h('section',{}, h('h3',{},'Your friends'),
+      friends.length ? h('div',{class:'friends'}, friends.map(fr=>{ const has = holding(fr.id);
+        return h('div',{class:'friend'}, avatar(fr.name),
+          h('div',{class:'who'}, h('b',{text:fr.name}), h('span',{text: has.length ? `Has ${has.map(b=>b.title).join(', ')}` : 'Has none of your books'})),
+          h('button',{class:'btn',onclick:()=>openFriendShelf(fr)},'View shelf'),
+          h('button',{class:'btn ghost',onclick:async()=>{ if(!confirm(`Remove ${fr.name} as a friend? You’ll stop seeing each other’s shelves.`)) return;
+            await run(sb.from('friendships').delete().eq('id',fr.fid),"Couldn't remove that friend."); loadAll(); }},'Remove'));
+      })) : h('p',{class:'small',text:'No friends yet. Send a request by email above.'})),
+    outgoing.length ? h('section',{}, h('h3',{},'Waiting for a reply'), h('div',{class:'friends'}, outgoing.map(f=>h('div',{class:'friend'}, avatar(name(f.addressee)),
+      h('div',{class:'who'}, h('b',{text:name(f.addressee)}), h('span',{text:`Sent ${fmtDate(f.created_at)}`})),
+      h('button',{class:'btn ghost',onclick:async()=>{ await run(sb.from('friendships').delete().eq('id',f.id),"Couldn't cancel that request."); loadAll(); }},'Cancel'))))) : null,
+    S.borrowed.length ? h('section',{}, h('h3',{},'Books you’re borrowing'), h('div',{class:'friends'}, S.borrowed.map(b=>h('div',{class:'friend'},
+      coverEl(b,'mini'), h('div',{class:'who'}, h('b',{text:b.title}), h('span',{text:`From ${b.owner_name}, since ${fmtDate(b.lent_at)}`})))))) : null,
+    h('section',{}, h('h3',{},'People without an account'),
+      h('p',{class:'small',style:'margin-top:0'},'Names you’ve lent books to who aren’t on Shelfmark. Add new ones from a book’s “Who has it” section.'),
+      S.contacts.length ? h('div',{class:'friends'}, S.contacts.map(c=>{ const has = contactHolding(c.id);
+        return h('div',{class:'friend'}, avatar(c.name),
+          h('div',{class:'who'}, h('b',{text:c.name}), h('span',{text: has.length ? `Has ${has.map(b=>b.title).join(', ')}` : 'Has none of your books'})),
+          h('button',{class:'btn ghost',onclick:async()=>{ if(!confirm(`Remove ${c.name}? Past loans will keep their name.`)) return;
+            await run(sb.from('contacts').delete().eq('id',c.id),"Couldn't remove that name."); loadAll(); }},'Remove'));
+      })) : h('p',{class:'small',text:'None yet.'})));
+}
+
+async function openFriendShelf(fr){
+  const body = h('div',{}, h('p',{class:'small',text:'Loading…'}));
+  openSheet(`${fr.name}’s shelf`, body);
+  try{
+    const books = await run(sb.rpc('friend_books',{p_friend:fr.id}), "Couldn't load their shelf.");
+    body.replaceChildren(books.length ? h('div',{class:'results'}, books.map(b=>h('div',{class:'result top'},
+      coverEl(b,'mini'),
+      h('div',{class:'info'}, h('b',{text:b.title}),
+        h('span',{text:[b.author, STATUS[b.status]].filter(Boolean).join(', ')}),
+        b.rating ? h('div',{class:'stars-sm',text:'★'.repeat(b.rating)}) : null,
+        b.on_loan ? h('div',{class:'tag',text:'Lent out'}) : null,
+        b.review ? h('p',{class:'shared-review',text:b.review}) : null)))) : h('p',{class:'small',text:'Their shelf is empty so far.'}));
+  }catch{ body.replaceChildren(h('p',{class:'status-msg err',text:"Couldn't load their shelf. Try again."})); }
+}
+
+/* ================= Account ================= */
+function openAccount(){
+  const nameIn = h('input',{class:'field',id:'acctName',value:myName(),maxlength:60});
+  openSheet('Your account', h('div',{},
+    h('p',{class:'small',style:'margin-top:0',text:`Signed in as ${S.user.email}`}),
+    h('label',{class:'lbl',for:'acctName'},'Name friends see'),
+    h('form',{class:'row',onsubmit:async e=>{ e.preventDefault(); const n=nameIn.value.trim(); if(!n) return;
+      await run(sb.from('profiles').update({display_name:n}).eq('id',me()),"Couldn't save your name."); toast('Name saved'); loadAll(); }},
+      h('div',{style:'flex:1;min-width:180px'},nameIn), h('button',{class:'btn',type:'submit'},'Save name')),
+    h('div',{class:'section row'}, h('button',{class:'btn',onclick:async()=>{ closeSheet(); await sb.auth.signOut(); }},'Sign out')),
+    h('div',{class:'section danger-zone'},
+      h('span',{class:'lbl'},'Delete account'),
+      h('p',{class:'small',style:'margin-top:0'},'Permanently deletes your account, your library, your reviews, and your friend connections. This can’t be undone.'),
+      h('button',{class:'btn danger',onclick:async()=>{
+        const typed = prompt('Type DELETE to permanently delete your account.');
+        if (typed !== 'DELETE') return;
+        await run(sb.rpc('delete_my_account'),"Couldn't delete your account.");
+        closeSheet(); await sb.auth.signOut(); toast('Your account was deleted.');
+      }},'Delete my account'))));
+}
+
+/* ================= Sheets ================= */
+let onSheetClose = null;
+function openSheet(title, body, onClose){
+  closeSheet();
+  const sheet = h('div',{class:'sheet',role:'dialog','aria-modal':'true','aria-label':title||'Book'},
+    h('div',{class:'sheet-head'}, title ? h('h2',{text:title}) : h('span'), h('button',{class:'close','aria-label':'Close',onclick:closeSheet},'×')), body);
+  const bd = h('div',{class:'backdrop',id:'backdrop',onclick:e=>{ if(e.target===bd) closeSheet(); }}, sheet);
+  document.body.append(bd); onSheetClose = onClose || null;
+  const f = sheet.querySelector('input,button:not(.close)'); if (f) f.focus({preventScroll:true});
+}
+function closeSheet(){ const b=$('#backdrop'); if(!b) return; const fn=onSheetClose; onSheetClose=null; b.remove(); if(fn) fn(); }
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeSheet(); });
+
+/* ================= Book detail ================= */
+function openDetail(id){
+  let book = S.books.find(b=>b.id===id); if (!book) return;
+  const save = async (patch, failMsg) => {
+    Object.assign(book, patch);
+    await run(sb.from('user_books').update(patch).eq('id',book.id), failMsg || "That change didn't save. Try again.");
+  };
+  const savedEl = h('span',{class:'saved'});
+
+  const statusSeg = h('div',{class:'seg',role:'group','aria-label':'Reading status'});
+  const drawStatus = () => statusSeg.replaceChildren(...Object.entries(STATUS).map(([k,l])=>h('button',{'aria-pressed':book.status===k,
+    onclick:async()=>{ await save({status:k}); drawStatus(); render(); }},l)));
+  drawStatus();
+
+  const stars = h('div',{class:'stars',role:'group','aria-label':'Rating'});
+  const drawStars = () => stars.replaceChildren(...[1,2,3,4,5].map(n=>h('button',{class:n<=(book.rating||0)?'on':'','aria-label':`${n} star${n>1?'s':''}`,
+    onclick:async()=>{ await save({rating: book.rating===n ? 0 : n}); drawStars(); render(); }},'★')));
+  drawStars();
+
+  let t = null;
+  const review = h('textarea',{class:'field',id:'reviewBox',placeholder:'What did you think?'});
+  review.value = book.review || '';
+  const flush = async () => { clearTimeout(t); t=null;
+    if ((book.review||'') !== review.value){ try{ await save({review:review.value}, "Your review didn't save. Try again."); savedEl.textContent='Review saved'; setTimeout(()=>savedEl.textContent='',1800); }catch{} } };
+  review.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(flush, 900); });
+  review.addEventListener('blur', flush);
+  const vis = h('select',{class:'field inline','aria-label':'Who can see your review'},
+    h('option',{value:'private',text:'Only me',selected:book.review_visibility!=='friends'&&book.review_visibility!=='public'}),
+    h('option',{value:'friends',text:'My friends',selected:book.review_visibility==='friends'||book.review_visibility==='public'}));
+  vis.addEventListener('change', async()=>{ await save({review_visibility:vis.value}); toast(vis.value==='friends'?'Friends can now see this review':'This review is now private'); });
+
+  const lendBox = h('div');
+  const drawLend = () => {
+    const open = openLoan(book), who = loanName(open);
+    const friends = friendsList();
+    const sel = h('select',{class:'field','aria-label':'Who has this book'},
+      h('option',{value:'',text: who ? 'Lend to someone else…' : 'Choose who has it…'}),
+      friends.length ? h('optgroup',{label:'Friends'}, friends.map(f=>h('option',{value:'u:'+f.id,text:f.name}))) : null,
+      S.contacts.length ? h('optgroup',{label:'Without an account'}, S.contacts.map(c=>h('option',{value:'c:'+c.id,text:c.name}))) : null,
+      h('option',{value:'new',text:'Someone new (type a name)…'}));
+    const newWrap = h('form',{class:'row hidden',style:'margin-top:10px',onsubmit:async e=>{
+      e.preventDefault(); const n = newWrap.querySelector('input').value.trim(); if(!n) return;
+      let c = S.contacts.find(x=>x.name.toLowerCase()===n.toLowerCase());
+      if (!c){ c = await run(sb.from('contacts').insert({name:n}).select().single(),"Couldn't save that name."); S.contacts.push(c); }
+      await lend({contact_id:c.id, borrower_name:c.name});
+    }}, h('div',{style:'flex:1;min-width:180px'}, h('input',{class:'field',placeholder:'Their name','aria-label':'Their name',maxlength:80})), h('button',{class:'btn primary',type:'submit'},'Save'));
+    sel.addEventListener('change', async ()=>{
+      const v = sel.value;
+      if (v==='new'){ newWrap.classList.remove('hidden'); newWrap.querySelector('input').focus(); return; }
+      newWrap.classList.add('hidden');
+      if (v.startsWith('u:')){ const f = friends.find(x=>'u:'+x.id===v); await lend({borrower_id:f.id, borrower_name:f.name}); }
+      else if (v.startsWith('c:')){ const c = S.contacts.find(x=>'c:'+x.id===v); await lend({contact_id:c.id, borrower_name:c.name}); }
+    });
+    const past = (book.loans||[]).filter(l=>l.returned_at).sort((a,b)=>new Date(b.lent_at)-new Date(a.lent_at)).slice(0,5);
+    lendBox.replaceChildren(...[
+      h('p',{class:'holder'}, who ? `With ${who} since ${fmtDate(open.lent_at)}` : 'On your shelf'),
+      h('div',{class:'row'}, h('div',{style:'flex:1;min-width:200px'},sel),
+        open ? h('button',{class:'btn',onclick:async()=>{ await run(sb.from('loans').update({returned_at:new Date().toISOString()}).eq('id',open.id),"Couldn't mark it returned.");
+          await refreshBook(); toast('Marked as returned'); }},'Mark returned') : null),
+      newWrap,
+      past.length ? h('div',{class:'history'}, h('span',{class:'small'},'Past loans'),
+        past.map(l=>h('div',{class:'small',text:`${loanName(l)}: ${fmtDate(l.lent_at)} to ${fmtDate(l.returned_at)}`}))) : null].filter(Boolean));
+  };
+  async function lend(target){
+    const open = openLoan(book);
+    try{
+      if (open) await run(sb.from('loans').update({returned_at:new Date().toISOString()}).eq('id',open.id),"Couldn't update who has it.");
+      await run(sb.from('loans').insert({user_book_id:book.id, ...target}),"Couldn't save who has it.");
+      toast(`Lent to ${target.borrower_name}`);
+    }catch{}
+    await refreshBook();
+  }
+  async function refreshBook(){ await loadAll(); book = S.books.find(b=>b.id===id) || book; drawLend(); }
+  drawLend();
+
+  const facts = [book.year, book.pages?`${book.pages} pages`:null, book.isbn?`ISBN ${book.isbn}`:null].filter(Boolean).join(', ');
+  openSheet('', h('div',{},
+    h('div',{class:'detail-top'}, coverEl(book),
+      h('div',{}, h('h2',{text:book.title}), h('p',{class:'by',text:book.author?`by ${book.author}`:'Author unknown'}),
+        facts ? h('p',{class:'small',style:'margin:0',text:facts}) : null,
+        h('p',{class:'small',text:`Added ${fmtDate(book.added_at)}`}))),
+    h('div',{class:'section'}, h('span',{class:'lbl'},'Reading status'), statusSeg),
+    h('div',{class:'section'}, h('span',{class:'lbl'},'Your rating'), stars),
+    h('div',{class:'section'},
+      h('div',{class:'row',style:'justify-content:space-between;margin-bottom:8px'}, h('label',{class:'lbl',for:'reviewBox',style:'margin:0'},'Review'), savedEl),
+      review,
+      h('div',{class:'row',style:'margin-top:8px'}, h('span',{class:'small'},'Who can see it:'), vis)),
+    h('div',{class:'section'}, h('span',{class:'lbl'},'Who has it'), lendBox),
+    h('div',{class:'section row',style:'justify-content:space-between'},
+      h('button',{class:'btn',onclick:async()=>{ await flush(); editBook(book); }},'Edit details'),
+      h('button',{class:'btn danger',onclick:async()=>{ if(!confirm(`Remove “${book.title}” from your library? Its review and loan history will be deleted too.`)) return;
+        clearTimeout(t); onSheetClose=null; closeSheet();
+        await run(sb.from('user_books').delete().eq('id',book.id),"Couldn't remove that book."); toast('Book removed'); loadAll(); }},'Remove book'))
+  ), ()=>{ flush().then(()=>render()); });
+}
+
+function bookForm(initial, submitLabel, onSubmit){
+  const f = (name,label,type='text',cls='') => h('div',{class:cls}, h('label',{class:'lbl',for:'f_'+name,text:label}),
+    h('input',{class:'field',id:'f_'+name,name,type,value:initial[name]??'',inputmode:type==='number'?'numeric':null}));
+  const status = h('select',{class:'field',id:'f_status'}, Object.entries(STATUS).map(([k,l])=>h('option',{value:k,text:l,selected:(initial.status||'want')===k})));
+  const form = h('form',{onsubmit:async e=>{
+    e.preventDefault();
+    const val = n => form.querySelector(`[name="${n}"]`).value.trim();
+    const title = val('title'); if (!title){ form.querySelector('[name=title]').focus(); return; }
+    const btn = form.querySelector('button[type=submit]'); btn.disabled = true;
+    try{
+      await onSubmit({ title, author:val('author')||null, year:parseInt(val('year'))||null, pages:parseInt(val('pages'))||null,
+        isbn: normalizeIsbn(val('isbn')) || val('isbn') || null, status: status.value });
+    }finally{ btn.disabled = false; }
+  }},
+    initial.cover_url ? h('div',{style:'width:84px;margin-bottom:14px'}, coverEl(initial)) : null,
+    h('div',{class:'grid2'}, f('title','Title','text','full'), f('author','Author','text','full'), f('year','Year','number'), f('pages','Pages','number'), f('isbn','ISBN','text','full'),
+      initial.hideStatus ? null : h('div',{class:'full'}, h('label',{class:'lbl',for:'f_status',text:'Status'}), status)),
+    h('div',{class:'row',style:'margin-top:18px'}, h('button',{class:'btn primary',type:'submit'},submitLabel)));
+  return form;
+}
+function editBook(book){
+  openSheet('Edit details', bookForm({...book, hideStatus:true}, 'Save changes', async v=>{
+    const { status, ...rest } = v;
+    await run(sb.from('user_books').update(rest).eq('id',book.id),"Couldn't save those changes.");
+    await loadAll(); closeSheet(); openDetail(book.id);
+  }));
+}
+
+/* ================= Adding books ================= */
+async function addBook(data){
+  const dupe = S.books.find(b=>(data.isbn && b.isbn===data.isbn) || (b.title.toLowerCase()===data.title.toLowerCase() && (b.author||'').toLowerCase()===(data.author||'').toLowerCase()));
+  if (dupe && !confirm(`“${dupe.title}” is already in your library. Add another copy?`)) return;
+  await run(sb.from('user_books').insert({ title:data.title, author:data.author, year:data.year, pages:data.pages, isbn:data.isbn, cover_url:data.cover_url||null, status:data.status||'want' }),
+    "Couldn't add that book. Try again.");
+  closeSheet(); toast(`Added “${data.title}”`); S.view='library'; loadAll();
+}
+
+async function lookupIsbn(isbn){
+  try{
+    const r = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
+    const d = (await r.json())['ISBN:'+isbn];
+    if (d && d.title) return { title:d.title, author:(d.authors||[]).map(a=>a.name).slice(0,3).join(', '), year:parseYear(d.publish_date),
+      pages:d.number_of_pages||null, isbn, cover_url:(d.cover && (d.cover.medium || d.cover.large)) || null };
+  }catch{}
+  try{
+    const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+    const it = ((await r.json()).items||[])[0];
+    if (it && it.volumeInfo && it.volumeInfo.title){ const v = it.volumeInfo;
+      return { title:v.title, author:(v.authors||[]).slice(0,3).join(', '), year:parseYear(v.publishedDate), pages:v.pageCount||null, isbn,
+        cover_url: v.imageLinks && v.imageLinks.thumbnail ? v.imageLinks.thumbnail.replace(/^http:/,'https:') : null };
+    }
+  }catch{}
+  return null;
+}
+async function searchBooks(q, signal){
+  const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&limit=12&fields=title,author_name,first_publish_year,isbn,cover_i,number_of_pages_median`;
+  const r = await fetch(url, {signal}); if (!r.ok) throw new Error('search failed');
+  const j = await r.json();
+  return (j.docs||[]).filter(d=>d.title).map(d=>({ title:d.title, author:(d.author_name||[]).slice(0,2).join(', '), year:d.first_publish_year||null,
+    pages:d.number_of_pages_median||null, isbn:(d.isbn||[]).find(x=>/^97[89]\d{10}$/.test(x)) || null,
+    cover_url: d.cover_i ? `https://covers.openlibrary.org/b/id/${d.cover_i}-M.jpg` : null }));
+}
+
+/* Barcode reading */
+let stream = null, scanTimer = null, zx = null, bd = null;
+function stopCamera(){ clearInterval(scanTimer); scanTimer=null; if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } }
+function zxDecode(canvas){
+  if (!window.ZXing) return null;
+  try{
+    if (!zx){ zx = new ZXing.MultiFormatReader(); const hints = new Map();
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.EAN_13,ZXing.BarcodeFormat.EAN_8,ZXing.BarcodeFormat.UPC_A]);
+      hints.set(ZXing.DecodeHintType.TRY_HARDER,true); zx.setHints(hints); }
+    return zx.decodeWithState(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(canvas)))).getText();
+  }catch{ return null; }
+}
+async function decodeCanvas(canvas){
+  if ('BarcodeDetector' in window){
+    try{ bd = bd || new BarcodeDetector({formats:['ean_13','ean_8','upc_a']}); const r = await bd.detect(canvas); if (r.length) return r[0].rawValue; }catch{}
+  }
+  return zxDecode(canvas);
+}
+async function decodeFile(file){
+  const url = URL.createObjectURL(file);
+  try{
+    const img = await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=url; });
+    for (const max of [1400,900,2000]) for (const rot of [0,90]){
+      const s = Math.min(1, max/Math.max(img.width,img.height)), w=Math.round(img.width*s), hh=Math.round(img.height*s);
+      const c = document.createElement('canvas'), ctx = c.getContext('2d');
+      if (rot){ c.width=hh; c.height=w; ctx.translate(hh/2,w/2); ctx.rotate(Math.PI/2); ctx.drawImage(img,-w/2,-hh/2,w,hh); }
+      else { c.width=w; c.height=hh; ctx.drawImage(img,0,0,w,hh); }
+      const code = await decodeCanvas(c); if (code) return code;
+    }
+    return null;
+  }catch{ return null; } finally{ URL.revokeObjectURL(url); }
+}
+
+function openAdd(tab='scan'){
+  const panel = h('div');
+  const tabs = h('div',{class:'seg',role:'tablist',style:'margin-bottom:18px'});
+  const drawTabs = cur => tabs.replaceChildren(...[['scan','Scan barcode'],['search','Search'],['manual','Enter manually']]
+    .map(([k,l])=>h('button',{role:'tab','aria-selected':cur===k,onclick:()=>show(k)},l)));
+  function show(k){ stopCamera(); drawTabs(k); panel.replaceChildren(k==='scan'?scanPanel(): k==='search'?searchPanel():bookForm({}, 'Add to library', addBook)); }
+  openSheet('Add a book', h('div',{},tabs,panel), stopCamera);
+  show(tab);
+
+  function confirmPanel(data, note){
+    stopCamera();
+    panel.replaceChildren(...[note ? h('p',{class:'status-msg',text:note}) : null, bookForm(data, 'Add to library', addBook),
+      h('button',{class:'btn ghost',style:'margin-top:8px',onclick:()=>show('scan')},'Scan a different book')].filter(Boolean));
+  }
+  async function handleIsbn(raw, msg){
+    const isbn = normalizeIsbn(raw);
+    if (!isbn){
+      msg.className='status-msg err';
+      msg.textContent = /^\d{12}$/.test(String(raw)) ? 'That’s a store barcode, not an ISBN. Look for the barcode labeled ISBN, usually on the back cover.' : "That isn't a valid ISBN. Check the number and try again.";
+      return;
+    }
+    stopCamera(); msg.className='status-msg'; msg.textContent=`Found ISBN ${isbn}. Looking up the book…`;
+    const b = await lookupIsbn(isbn);
+    if (b) confirmPanel(b, 'Check these details before adding.');
+    else confirmPanel({isbn}, `We couldn't find ISBN ${isbn} in the book catalogs. Enter the title and author to add it.`);
+  }
+
+  function scanPanel(){
+    const msg = h('p',{class:'status-msg',text:'Point your camera at the barcode on the back of the book.'});
+    const video = h('video',{playsinline:true,muted:true,autoplay:true});
+    const box = h('div',{class:'scan-box hidden'}, video, h('div',{class:'aim'}));
+    const canvas = document.createElement('canvas');
+    const startBtn = h('button',{class:'btn primary',onclick:startCam},'Start camera');
+    async function startCam(){
+      startBtn.disabled = true;
+      try{ stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280}},audio:false}); }
+      catch{ startBtn.disabled=false; msg.className='status-msg err'; msg.textContent='Couldn’t open the camera. Allow camera access for this site, or use “Photo of the barcode” instead.'; return; }
+      video.srcObject = stream; box.classList.remove('hidden'); startBtn.classList.add('hidden');
+      try{ await video.play(); }catch{}
+      msg.className='status-msg'; msg.textContent='Hold the barcode inside the frame…';
+      let busy = false;
+      scanTimer = setInterval(async ()=>{
+        if (busy || !video.videoWidth) return; busy = true;
+        const w = Math.min(960, video.videoWidth), hh = Math.round(video.videoHeight*w/video.videoWidth);
+        canvas.width=w; canvas.height=hh; canvas.getContext('2d').drawImage(video,0,0,w,hh);
+        const code = await decodeCanvas(canvas); busy = false;
+        if (code && scanTimer){ if (navigator.vibrate) navigator.vibrate(60); stopCamera(); box.classList.add('hidden'); handleIsbn(code, msg); }
+      }, 300);
+    }
+    const photoIn = h('input',{type:'file',accept:'image/*',capture:'environment',class:'hidden',onchange:async e=>{
+      const file = e.target.files[0]; e.target.value=''; if(!file) return;
+      msg.className='status-msg'; msg.textContent='Reading the barcode…';
+      const code = await decodeFile(file);
+      if (code) handleIsbn(code, msg);
+      else { msg.className='status-msg err'; msg.textContent="Couldn't read a barcode in that photo. Get closer, keep it flat and well lit, and try again."; }
+    }});
+    const isbnIn = h('input',{class:'field',inputmode:'numeric',placeholder:'e.g. 978-0-14-311760-2','aria-label':'ISBN'});
+    return h('div',{}, box, msg,
+      h('div',{class:'row'}, startBtn, h('button',{class:'btn',onclick:()=>photoIn.click()},'Photo of the barcode'), photoIn),
+      h('div',{class:'divider'},'or type the ISBN'),
+      h('form',{class:'row',onsubmit:e=>{ e.preventDefault(); handleIsbn(isbnIn.value, msg); }},
+        h('div',{style:'flex:1;min-width:180px'},isbnIn), h('button',{class:'btn',type:'submit'},'Look up')));
+  }
+
+  function searchPanel(){
+    const input = h('input',{class:'field',type:'search',placeholder:'Title, author, or both','aria-label':'Search for a book'});
+    const msg = h('p',{class:'status-msg'}), results = h('div',{class:'results'});
+    let ctl = null;
+    const form = h('form',{class:'row',onsubmit:async e=>{
+      e.preventDefault(); const q = input.value.trim(); if(!q) return;
+      if (ctl) ctl.abort(); ctl = new AbortController();
+      results.replaceChildren(); msg.className='status-msg'; msg.textContent='Searching…';
+      try{
+        const list = await searchBooks(q, ctl.signal);
+        msg.textContent = list.length ? 'Pick your book. You can edit the details before adding.' : 'No matches. Try different words, or enter it manually.';
+        results.replaceChildren(...list.map(r=>h('div',{class:'result'}, coverEl(r,'mini'),
+          h('div',{class:'info'}, h('b',{text:r.title}), h('span',{text:[r.author,r.year].filter(Boolean).join(', ')})),
+          h('button',{class:'btn',onclick:()=>confirmPanel(r,'Check these details before adding. The ISBN may be a different edition from yours.')},'Choose'))));
+      }catch(err){ if (err.name!=='AbortError'){ msg.className='status-msg err'; msg.textContent="The search didn't work. Check your connection and try again."; } }
+    }}, h('div',{style:'flex:1;min-width:180px'},input), h('button',{class:'btn primary',type:'submit'},'Search'));
+    return h('div',{}, form, msg, results);
+  }
+}
+
+/* ================= Start ================= */
+let currentUserId = null, firstAuth = true;
+sb.auth.onAuthStateChange((_event, session) => {
+  const user = session ? session.user : null;
+  const changed = firstAuth || (user && user.id) !== currentUserId;
+  firstAuth = false;
+  S.user = user; currentUserId = user && user.id;
+  if (!changed) return;
+  setTimeout(() => {
+    Object.assign(S, { books:[], contacts:[], friendships:[], profiles:{}, borrowed:[], loaded:false, view:'library', filter:'all', q:'' });
+    render();
+    if (user) loadAll();
+  }, 0);
+});
+document.addEventListener('visibilitychange', ()=>{ if (document.visibilityState==='visible' && S.user && !$('#backdrop')) loadAll(); });
+</script>
+</body>
+</html>
