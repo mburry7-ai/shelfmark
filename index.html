@@ -198,6 +198,7 @@ select.field.inline{width:auto;padding:5px 10px;font-size:14px}
 .check{display:flex;align-items:center;gap:6px;flex-wrap:wrap;cursor:pointer}
 .check input{width:18px;height:18px;accent-color:var(--accent)}
 .import-sum{font-weight:600;margin:0 0 12px}
+.ask.muted-ask{background:var(--raised);margin:14px 0 0}
 .howto{border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:10px}
 .howto summary{cursor:pointer;font-weight:600}
 .howto .steps{margin-top:10px}
@@ -266,6 +267,9 @@ const incomingRequests = () => S.requests.filter(r=>r.status==='pending' && r.ow
 const outgoingRequests = () => S.requests.filter(r=>r.requester_id===me());
 const newRecs = () => (S.recs||[]).filter(r=>r.recipient_id===me() && r.status==='new');
 const sentRecs = () => (S.recs||[]).filter(r=>r.sender_id===me());
+const inTransfers = () => (S.transfers||[]).filter(t=>t.to_id===me() && t.status==='pending');
+const outTransfers = () => (S.transfers||[]).filter(t=>t.from_id===me());
+const pendingTransferFor = bookId => (S.transfers||[]).find(t=>t.from_id===me() && t.status==='pending' && t.book_id===bookId);
 function friendsList(){
   return S.friendships.filter(f=>f.status==='accepted')
     .map(f=>{ const id = f.requester===me() ? f.addressee : f.requester; return { id, fid:f.id, name:(S.profiles[id]||{}).display_name || 'A friend' }; })
@@ -302,6 +306,11 @@ async function loadAll(){
   if (recs.error){ console.error(recs.error); S.recs = null;
     if (!S.warnedUpdate3){ S.warnedUpdate3 = true; toast('Recommendations aren’t set up yet. Run update-3-recommendations.sql in Supabase.'); } }
   else S.recs = recs.data || [];
+  // "This book belongs to a friend" comes from database update 4.
+  const tr = await sb.rpc('my_transfers');
+  if (tr.error){ console.error(tr.error); S.transfers = null;
+    if (!S.warnedUpdate4){ S.warnedUpdate4 = true; toast('Book ownership changes aren’t set up yet. Run update-4-ownership.sql in Supabase.'); } }
+  else S.transfers = tr.data || [];
   render();
 }
 
@@ -360,7 +369,7 @@ function render(){
   const focusedId = document.activeElement && document.activeElement.id;
   const caret = document.activeElement && document.activeElement.selectionStart;
   const lent = S.books.filter(openLoan).length;
-  const incoming = S.friendships.filter(f=>f.status==='pending' && f.addressee===me()).length + incomingRequests().length;
+  const incoming = S.friendships.filter(f=>f.status==='pending' && f.addressee===me()).length + incomingRequests().length + inTransfers().length;
   app.replaceChildren(h('div',{class:'wrap'},
     h('header',{class:'top'},
       h('div',{class:'brand'}, h('h1',{text:'Shelfmark'}),
@@ -452,7 +461,8 @@ function libraryView(){
         h('div',{class:'meta'}, h('div',{text:STATUS[b.status]}),
           b.rating ? h('div',{class:'stars-sm',text:'★'.repeat(b.rating)}) : null,
           who ? h('div',{class:'lent',text:`With ${who}`}) : null,
-          asks.length ? h('div',{class:'tag',text: asks.length===1 ? `${asks[0].requester_name} asked to borrow` : `${asks.length} borrow requests`}) : null));
+          asks.length ? h('div',{class:'tag',text: asks.length===1 ? `${asks[0].requester_name} asked to borrow` : `${asks.length} borrow requests`}) : null,
+          pendingTransferFor(b.id) ? h('div',{class:'tag muted',text:`Checking with ${pendingTransferFor(b.id).to_name}`}) : null));
     })) : h('p',{class:'small',text:'No books match that filter.'}));
 }
 
@@ -498,6 +508,7 @@ function friendsView(){
       h('div',{class:'who'}, h('b',{text:r.title}), h('span',{text:`${r.requester_name} asked on ${fmtDate(r.created_at)}`})),
       h('button',{class:'btn primary',onclick:()=>respondRequest(r,true)},'Approve'),
       h('button',{class:'btn ghost',onclick:()=>respondRequest(r,false)},'Decline'))))) : null,
+    transferSections()[0],
     h('section',{}, h('h3',{},'Your friends'),
       friends.length ? h('div',{class:'friends'}, friends.map(fr=>{ const has = holding(fr.id);
         return h('div',{class:'friend'}, avatar(fr.name),
@@ -511,6 +522,7 @@ function friendsView(){
     outgoing.length ? h('section',{}, h('h3',{},'Waiting for a reply'), h('div',{class:'friends'}, outgoing.map(f=>h('div',{class:'friend'}, avatar(name(f.addressee)),
       h('div',{class:'who'}, h('b',{text:name(f.addressee)}), h('span',{text:`Sent ${fmtDate(f.created_at)}`})),
       h('button',{class:'btn ghost',onclick:async()=>{ await run(sb.from('friendships').delete().eq('id',f.id),"Couldn't cancel that request."); loadAll(); }},'Cancel'))))) : null,
+    transferSections()[1],
     sentRecs().length ? h('section',{}, h('h3',{},'Recommendations you’ve sent'), h('div',{class:'friends'}, sentRecs().map(r=>h('div',{class:'friend'},
       coverEl(r,'mini'),
       h('div',{class:'who'}, h('b',{text:r.title}),
@@ -607,6 +619,78 @@ function openBorrowReview(b){
     h('div',{class:'section row'}, saveBtn, msg,
       S.recs ? h('button',{class:'btn',onclick:()=>openRecommend(b)},'Recommend to a friend') : null),
     reviews));
+}
+
+/* ================= "This is a friend's book" ================= */
+function transferSections(){
+  if (!S.transfers) return [null, null];
+  const incoming = inTransfers(), outgoing = outTransfers();
+  const outText = t => t.status==='pending' ? `Waiting for ${t.to_name} to confirm`
+    : t.status==='accepted' ? `${t.to_name} confirmed. It’s now under Books you’re borrowing.`
+    : `${t.to_name} said it isn’t theirs, so it’s still on your shelf.`;
+  return [
+    incoming.length ? h('section',{}, h('h3',{},'Is this your book?'), h('div',{class:'friends'}, incoming.map(t=>{
+      const status = h('select',{class:'field inline','aria-label':'Your reading status for this book'},
+        Object.entries(STATUS).map(([k,l])=>h('option',{value:k,text:l,selected:k==='read'})));
+      return h('div',{class:'friend rec'}, coverEl(t,'mini'),
+        h('div',{class:'who'}, h('b',{text:t.title}),
+          h('span',{text:`${t.from_name} says they have your copy${t.author?' of this book by '+t.author:''}.`}),
+          h('span',{class:'small',text: t.already_have ? 'It matches a book already on your shelf, so it’ll be marked as lent to them.'
+            : `If you confirm, it’s added to your shelf as lent to ${t.from_name}. Their review stays with it.`}),
+          t.already_have ? null : h('div',{class:'row',style:'margin-top:6px'}, h('span',{class:'small'},'Your status:'), status)),
+        h('div',{class:'row rec-actions'},
+          h('button',{class:'btn primary',onclick:e=>respondTransfer(t,true,status.value,e.currentTarget)},'Yes, it’s mine'),
+          h('button',{class:'btn ghost',onclick:e=>respondTransfer(t,false,null,e.currentTarget)},'Not mine')));
+    }))) : null,
+    outgoing.length ? h('section',{}, h('h3',{},'Books you said belong to friends'), h('div',{class:'friends'}, outgoing.map(t=>h('div',{class:'friend'},
+      coverEl(t,'mini'),
+      h('div',{class:'who'}, h('b',{text:t.title}), h('span',{text:outText(t)})),
+      t.status==='pending' ? h('button',{class:'btn ghost',onclick:async e=>{ e.currentTarget.disabled=true;
+        await run(sb.rpc('cancel_transfer',{p_id:t.id}),"Couldn't cancel that.").catch(()=>{}); toast('Cancelled. It’s still on your shelf.'); loadAll(); }},'Cancel') : null)))) : null
+  ];
+}
+async function respondTransfer(t, accept, status, btn){
+  btn.disabled = true;
+  let res;
+  try{ res = await run(sb.rpc('respond_transfer',{p_id:t.id, p_accept:accept, p_status:status||'read'}),"Couldn't answer that."); }
+  catch{ btn.disabled = false; return; }
+  toast({ moved:`“${t.title}” is on your shelf now, lent to ${t.from_name}.`, linked:`Linked to your copy of “${t.title}”, lent to ${t.from_name}.`,
+    declined:`Got it. We’ll let ${t.from_name} know.`, not_friends:`You’re no longer friends with ${t.from_name}.`,
+    not_found:'That book isn’t on their shelf anymore.' }[res] || 'Done.');
+  loadAll();
+}
+function openTransfer(book){
+  const friends = friendsList();
+  if (!friends.length){ openSheet('Whose book is this?', h('p',{class:'small',text:'Add the owner as a friend first. Then you can mark this as their book.'})); return; }
+  let chosen = null;
+  const picks = h('div',{class:'chips',role:'radiogroup','aria-label':'Owner'});
+  const msg = h('p',{class:'status-msg'});
+  const send = h('button',{class:'btn primary',disabled:true});
+  const draw = () => {
+    picks.replaceChildren(...friends.map(f=>h('button',{type:'button',class:'chip',role:'radio','aria-pressed':chosen===f.id,'aria-checked':chosen===f.id,
+      onclick:()=>{ chosen = f.id; draw(); }}, chosen===f.id ? `✓ ${f.name}` : f.name)));
+    const f = friends.find(x=>x.id===chosen);
+    send.textContent = f ? `Ask ${f.name} to confirm` : 'Choose the owner';
+    send.disabled = !f;
+  };
+  send.onclick = async () => {
+    const f = friends.find(x=>x.id===chosen); if (!f) return;
+    send.disabled = true;
+    try{
+      const res = await run(sb.rpc('propose_transfer',{p_book:book.id, p_to:f.id}),"Couldn't send that.");
+      if (res==='sent'){ closeSheet(); toast(`Asked ${f.name} to confirm “${book.title}” is theirs.`); loadAll(); return; }
+      msg.className='status-msg err';
+      msg.textContent = { already_sent:'You’ve already asked someone about this book.', lent_out:'You’ve marked this book as lent to someone. Mark it returned first.',
+        not_friends:`You’re not friends with ${f.name} on Shelfmark.`, not_found:'That book isn’t on your shelf anymore.' }[res] || 'Something went wrong.';
+    }catch{}
+    send.disabled = false;
+  };
+  draw();
+  openSheet('Whose book is this?', h('div',{},
+    h('div',{class:'result',style:'margin-bottom:16px'}, coverEl(book,'mini'), h('div',{class:'info'}, h('b',{text:book.title}), h('span',{text:book.author||''}))),
+    h('p',{style:'margin-top:0'},'If this book actually belongs to a friend, they’ll be asked to confirm. Once they do, it moves to their shelf, marked as lent to you, and shows under Books you’re borrowing. Your rating and review stay with it.'),
+    h('span',{class:'lbl'},'Who owns it?'), picks,
+    h('div',{class:'section'}, send, msg)));
 }
 
 /* ================= Recommending ================= */
@@ -869,7 +953,8 @@ function openDetail(id){
           await refreshBook(); toast('Marked as returned'); }},'Mark returned') : null),
       newWrap,
       past.length ? h('div',{class:'history'}, h('span',{class:'small'},'Past loans'),
-        past.map(l=>h('div',{class:'small',text:`${loanName(l)}: ${fmtDate(l.lent_at)} to ${fmtDate(l.returned_at)}`}))) : null].filter(Boolean));
+        past.map(l=>h('div',{class:'small',text:`${loanName(l)}: ${fmtDate(l.lent_at)} to ${fmtDate(l.returned_at)}`}))) : null,
+      ownershipLine()].filter(Boolean));
   };
   async function lend(target){
     const open = openLoan(book);
@@ -881,6 +966,15 @@ function openDetail(id){
     await refreshBook();
   }
   async function refreshBook(){ await loadAll(); book = S.books.find(b=>b.id===id) || book; drawLend(); }
+  function ownershipLine(){
+    if (!S.transfers) return null;
+    const t = pendingTransferFor(book.id);
+    if (t) return h('div',{class:'ask muted-ask'}, h('span',{text:`Waiting for ${t.to_name} to confirm this is their book.`}),
+      h('button',{class:'btn ghost',onclick:async e=>{ e.currentTarget.disabled=true; await run(sb.rpc('cancel_transfer',{p_id:t.id}),"Couldn't cancel that.").catch(()=>{}); await refreshBook(); }},'Cancel'));
+    if (openLoan(book)) return null;
+    return h('p',{class:'small',style:'margin:14px 0 0'}, 'Not actually yours? ',
+      h('button',{class:'linkish',onclick:async()=>{ await flush(); openTransfer(book); }},'This belongs to a friend'));
+  }
   drawLend();
 
   const facts = [book.year, book.pages?`${book.pages} pages`:null, book.isbn?`ISBN ${book.isbn}`:null].filter(Boolean).join(', ');
