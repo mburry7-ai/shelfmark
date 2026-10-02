@@ -13,6 +13,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,400;7..72,600;7..72,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.5.3/papaparse.min.js"></script>
 <style>
 :root{
   --bg:#EAEEF3; --surface:#FFFFFF; --raised:#F5F7FA; --ink:#16213A; --muted:#586277; --line:#D3D9E2;
@@ -190,6 +191,17 @@ select.field.inline{width:auto;padding:5px 10px;font-size:14px}
 .rec-note{font-size:14px;color:var(--ink) !important;border-left:2px solid var(--accent);padding-left:10px;margin-top:6px}
 .rec-from{background:var(--accent-soft);border-radius:10px;padding:10px 12px;margin-top:16px;font-size:14px}
 .rec-from .rev-text{margin:4px 0 0}
+.linkish{background:none;border:0;padding:0;color:var(--accent);font-weight:600;text-decoration:underline;text-underline-offset:3px}
+.steps{padding-left:22px;margin:0 0 12px}
+.steps li{margin-bottom:6px}
+.checks{display:grid;gap:8px;margin-bottom:8px}
+.check{display:flex;align-items:center;gap:6px;flex-wrap:wrap;cursor:pointer}
+.check input{width:18px;height:18px;accent-color:var(--accent)}
+.import-sum{font-weight:600;margin:0 0 12px}
+.howto{border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:10px}
+.howto summary{cursor:pointer;font-weight:600}
+.howto .steps{margin-top:10px}
+.section > label.check{display:flex;font-weight:400;font-size:inherit;margin:0}
 .ask{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;background:var(--accent-soft);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:14px}
 @media (max-width:520px){.friend:has(.btn){flex-wrap:wrap}.friend:has(.btn) .who{flex-basis:calc(100% - 56px)}}
 </style>
@@ -407,7 +419,8 @@ function libraryView(){
     h('h2',{text:'Your shelf is empty'}),
     h('p',{text:'Scan the barcode on the back of a book, or search by title, to add your first one.'}),
     h('button',{class:'btn primary',onclick:()=>openAdd('scan')},'Scan a barcode'),' ',
-    h('button',{class:'btn',onclick:()=>openAdd('search')},'Search by title')));
+    h('button',{class:'btn',onclick:()=>openAdd('search')},'Search by title'),
+    h('p',{class:'small',style:'margin:16px 0 0'},'Use Goodreads or StoryGraph? ', h('button',{class:'linkish',onclick:openImport},'Import your library'))));
   const counts = {all:all.length, lent:0};
   all.forEach(b=>{ counts[b.status]=(counts[b.status]||0)+1; if(openLoan(b)) counts.lent++; });
   const filters = [['all','All'],['reading','Reading'],['want','Want to read'],['read','Read'],['dnf',"Didn't finish"],['lent','Lent out']].filter(([k])=>k==='all'||counts[k]);
@@ -762,7 +775,8 @@ function openAccount(){
     h('form',{class:'row',onsubmit:async e=>{ e.preventDefault(); const n=nameIn.value.trim(); if(!n) return;
       await run(sb.from('profiles').update({display_name:n}).eq('id',me()),"Couldn't save your name."); toast('Name saved'); loadAll(); }},
       h('div',{style:'flex:1;min-width:180px'},nameIn), h('button',{class:'btn',type:'submit'},'Save name')),
-    h('div',{class:'section row'}, h('button',{class:'btn',onclick:async()=>{ closeSheet(); await sb.auth.signOut(); }},'Sign out')),
+    h('div',{class:'section row'}, h('button',{class:'btn',onclick:openImport},'Import from Goodreads or StoryGraph'),
+      h('button',{class:'btn',onclick:async()=>{ closeSheet(); await sb.auth.signOut(); }},'Sign out')),
     h('div',{class:'section danger-zone'},
       h('span',{class:'lbl'},'Delete account'),
       h('p',{class:'small',style:'margin-top:0'},'Permanently deletes your account, your library, your reviews, and your friend connections. This can’t be undone.'),
@@ -932,6 +946,145 @@ async function addBook(data){
   closeSheet(); toast(`Added “${data.title}”`); S.view='library'; loadAll();
 }
 
+/* ================= Goodreads import ================= */
+const GR_SHELVES = { 'read':'Read', 'currently-reading':'Currently reading', 'to-read':'Want to read', 'did-not-finish':"Didn't finish", 'paused':'Paused' };
+function grStatus(shelf){
+  if (shelf==='read') return 'read';
+  if (shelf==='currently-reading' || shelf==='paused') return 'reading';
+  if (/dnf|did-?not-?finish|abandon|gave-?up|unfinished/i.test(shelf||'')) return 'dnf';
+  return 'want';
+}
+function grText(html){
+  const t = document.createElement('textarea');
+  t.innerHTML = String(html||'').replace(/<br\s*\/?>/gi,'\n').replace(/<\/p>\s*<p>/gi,'\n\n').replace(/<[^>]+>/g,'');
+  return t.value.trim();
+}
+function grDate(s){ const m = String(s||'').match(/(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/); return m ? new Date(Date.UTC(+m[1], +m[2]-1, +m[3], 12)).toISOString() : null; }
+// StoryGraph exports use different column names. Translate them to Goodreads' names.
+function sgToGr(r){
+  const rating = parseFloat(r['Star Rating']);
+  const owned = String(r['Owned?']||'').trim().toLowerCase();
+  return {
+    'Title': r['Title'],
+    'Author': String(r['Authors']||'').split(',').map(x=>x.trim()).filter(Boolean).slice(0,2).join(', '),
+    'ISBN13': r['ISBN/UID'], 'ISBN': '',
+    'My Rating': isNaN(rating) ? 0 : Math.round(rating),
+    'My Review': r['Review'],
+    'Exclusive Shelf': String(r['Read Status']||'').trim().toLowerCase() || 'read',
+    'Date Added': r['Date Added'], 'Date Read': r['Last Date Read'],
+    'Owned Copies': ['yes','true','1'].includes(owned) ? 1 : 0
+  };
+}
+function grRow(r){
+  const title = String(r['Title']||'').replace(/\s*\([^()]*#\s*[\d.]+\)\s*$/,'').trim();
+  if (!title) return null;
+  const isbn = normalizeIsbn(r['ISBN13']) || normalizeIsbn(r['ISBN']);
+  const shelf = String(r['Exclusive Shelf']||'').trim() || 'read';
+  const year = parseInt(r['Original Publication Year']) || parseInt(r['Year Published']) || null;
+  return {
+    shelf, owned: parseInt(r['Owned Copies'])>0,
+    title: title.slice(0,300), author: String(r['Author']||'').trim() || null,
+    isbn, year, pages: parseInt(r['Number of Pages']) || null,
+    cover_url: isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg?default=false` : null,
+    status: grStatus(shelf), rating: Math.max(0, Math.min(5, parseInt(r['My Rating'])||0)),
+    review: grText(r['My Review']).slice(0,20000),
+    added_at: grDate(r['Date Added']), read_at: grDate(r['Date Read'])
+  };
+}
+
+function openImport(){
+  const body = h('div');
+  const fileIn = h('input',{type:'file',accept:'.csv,text/csv',class:'hidden',onchange:e=>{ const f = e.target.files[0]; e.target.value=''; if (f) parseFile(f); }});
+  const msg = h('p',{class:'status-msg'});
+  let source = 'Goodreads';
+  function start(){
+    body.replaceChildren(
+      h('p',{style:'margin-top:0'},'Bring your books, ratings, and reviews into Shelfmark. First, download your library:'),
+      h('details',{class:'howto',open:true}, h('summary',{},'From Goodreads'),
+        h('ol',{class:'steps'},
+          h('li',{},'On the Goodreads website, open ', h('b',{},'My Books'), '.'),
+          h('li',{},'In the left sidebar, under Tools, click ', h('b',{},'Import and export'), '.'),
+          h('li',{},'Click ', h('b',{},'Export Library'), '. When the link appears (it can take a minute), download the file.')),
+        h('p',{class:'small'},'The Goodreads app can’t do this, so use a web browser. On a phone, choose “Desktop site” in your browser menu.')),
+      h('details',{class:'howto'}, h('summary',{},'From StoryGraph'),
+        h('ol',{class:'steps'},
+          h('li',{},'On StoryGraph, tap your profile picture and choose ', h('b',{},'Manage Account'), '.'),
+          h('li',{},'Find ', h('b',{},'Export StoryGraph Library'), ' and start the export.'),
+          h('li',{},'When it’s ready, download the .csv file.')),
+        h('p',{class:'small'},'StoryGraph’s half- and quarter-star ratings are rounded to the nearest whole star.')),
+      h('div',{class:'row',style:'margin-top:14px'}, h('button',{class:'btn primary',onclick:()=>fileIn.click()},'Choose the file'), fileIn), msg);
+  }
+  function parseFile(file){
+    msg.className='status-msg'; msg.textContent='Reading the file…';
+    if (!window.Papa){ msg.className='status-msg err'; msg.textContent='The file reader didn’t load. Refresh the page and try again.'; return; }
+    Papa.parse(file, { header:true, skipEmptyLines:true, complete: res=>{
+      const fields = res.meta.fields || [];
+      const isGR = fields.includes('Title') && fields.includes('Exclusive Shelf');
+      const isSG = fields.includes('Title') && fields.includes('Read Status');
+      if (!isGR && !isSG){
+        msg.className='status-msg err'; msg.textContent='That doesn’t look like a Goodreads or StoryGraph export. Choose the .csv file you downloaded from one of them.'; return;
+      }
+      source = isGR ? 'Goodreads' : 'StoryGraph';
+      const rows = res.data.map(r=>grRow(isGR ? r : sgToGr(r))).filter(Boolean);
+      if (!rows.length){ msg.className='status-msg err'; msg.textContent='No books were found in that file.'; return; }
+      review(rows);
+    }, error: ()=>{ msg.className='status-msg err'; msg.textContent='Couldn’t read that file. Make sure it’s the .csv file from Goodreads.'; } });
+  }
+  function review(rows){
+    const key = b => b.isbn || (b.title.toLowerCase()+'|'+(b.author||'').toLowerCase());
+    const have = new Set(S.books.flatMap(b=>[b.isbn, b.title.toLowerCase().trim()+'|'+(b.author||'').toLowerCase().trim()].filter(Boolean)));
+    const isDupe = b => (b.isbn && have.has(b.isbn)) || have.has(b.title.toLowerCase()+'|'+(b.author||'').toLowerCase());
+    const shelves = [...new Set(rows.map(r=>r.shelf))].sort((a,b)=>(GR_SHELVES[a]?0:1)-(GR_SHELVES[b]?0:1) || a.localeCompare(b));
+    const picked = new Set(shelves);
+    const ownedCount = rows.filter(r=>r.owned).length;
+    let ownedOnly = false, withReviews = true;
+    const summary = h('p',{class:'import-sum'});
+    const go = h('button',{class:'btn primary'});
+    const chosen = () => { const seen = new Set(); return rows.filter(r=>picked.has(r.shelf) && (!ownedOnly || r.owned) && !isDupe(r) && !seen.has(key(r)) && seen.add(key(r))); };
+    const shelfBox = h('div',{class:'checks'}, shelves.map(sh=>{
+      const n = rows.filter(r=>r.shelf===sh).length;
+      const cb = h('input',{type:'checkbox',checked:true,onchange:e=>{ e.target.checked ? picked.add(sh) : picked.delete(sh); update(); }});
+      return h('label',{class:'check'}, cb, ` ${GR_SHELVES[sh] || sh.replace(/-/g,' ')} `, h('span',{class:'small',text:`(${n})`}),
+        !GR_SHELVES[sh] ? h('span',{class:'small',text:` → ${STATUS[grStatus(sh)]}`}) : null);
+    }));
+    const ownedBox = ownedCount ? h('label',{class:'check'}, h('input',{type:'checkbox',onchange:e=>{ ownedOnly = e.target.checked; update(); }}),
+      ` Only books ${source} lists as owned `, h('span',{class:'small',text:`(${ownedCount})`})) : null;
+    const revBox = h('label',{class:'check'}, h('input',{type:'checkbox',checked:true,onchange:e=>{ withReviews = e.target.checked; update(); }}),
+      ' Include my ratings and reviews ', h('span',{class:'small',text:'(shared with friends, like other reviews)'}));
+    function update(){
+      const list = chosen(), dupes = rows.filter(r=>picked.has(r.shelf) && (!ownedOnly || r.owned) && isDupe(r)).length;
+      summary.textContent = `${list.length} book${list.length===1?'':'s'} will be added.` + (dupes ? ` ${dupes} already in your library will be skipped.` : '');
+      go.textContent = list.length ? `Import ${list.length} book${list.length===1?'':'s'}` : 'Nothing to import';
+      go.disabled = !list.length;
+    }
+    go.onclick = async () => {
+      const list = chosen(); go.disabled = true;
+      const out = list.map(r=>({ title:r.title, author:r.author, isbn:r.isbn, year:r.year, pages:r.pages, cover_url:r.cover_url,
+        status:r.status, rating: withReviews ? r.rating : 0, review: withReviews ? r.review : '',
+        reviewed_at: withReviews && (r.review || r.rating) ? (r.read_at || r.added_at) : null,
+        ...(r.added_at ? {added_at:r.added_at} : {}) }));
+      let done = 0;
+      try{
+        for (let i=0; i<out.length; i+=100){
+          go.textContent = `Importing… ${done} of ${out.length}`;
+          await run(sb.from('user_books').insert(out.slice(i,i+100)), 'The import stopped partway. Books added so far are saved. Choose the file again to add the rest.');
+          done += Math.min(100, out.length-i);
+        }
+        closeSheet(); toast(`Imported ${done} book${done===1?'':'s'} from ${source}`); S.view='library'; S.filter='all'; loadAll();
+      }catch{ go.textContent = `Stopped after ${done} of ${out.length}`; loadAll(); }
+    };
+    update();
+    body.replaceChildren(...[
+      h('p',{style:'margin-top:0'}, `Found ${rows.length} book${rows.length===1?'':'s'} in your ${source} export. Shelfmark is for books you own, so uncheck any of these you don’t have.`),
+      h('span',{class:'lbl'}, source==='Goodreads' ? 'Goodreads shelves' : 'StoryGraph reading status'), shelfBox, ownedBox,
+      h('div',{class:'section'}, revBox),
+      h('div',{class:'section'}, summary, h('div',{class:'row'}, go, h('button',{class:'btn ghost',onclick:start},'Choose a different file')))
+    ].filter(Boolean));
+  }
+  start();
+  openSheet('Import your library', body);
+}
+
 async function lookupIsbn(isbn){
   try{
     const r = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
@@ -997,7 +1150,8 @@ function openAdd(tab='scan'){
   const drawTabs = cur => tabs.replaceChildren(...[['scan','Scan barcode'],['search','Search'],['manual','Enter manually']]
     .map(([k,l])=>h('button',{role:'tab','aria-selected':cur===k,onclick:()=>show(k)},l)));
   function show(k){ stopCamera(); drawTabs(k); panel.replaceChildren(k==='scan'?scanPanel(): k==='search'?searchPanel():bookForm({}, 'Add to library', addBook)); }
-  openSheet('Add a book', h('div',{},tabs,panel), stopCamera);
+  openSheet('Add a book', h('div',{},tabs,panel,
+    h('p',{class:'small',style:'margin:22px 0 0;text-align:center'}, h('button',{class:'linkish',onclick:openImport},'Import from Goodreads or StoryGraph instead'))), stopCamera);
   show(tab);
 
   function confirmPanel(data, note){
